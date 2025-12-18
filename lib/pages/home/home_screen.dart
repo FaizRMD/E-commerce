@@ -10,6 +10,8 @@ import '../../core/ui_constants.dart';
 import '../../models/product.dart';
 import '../cart/cart_screen.dart';
 import '../product/details_screen.dart';
+import '../profile/profile_screen.dart';
+import '../orders/my_orders_screen.dart';
 import '../widgets/categories.dart';
 import '../widgets/item_card.dart';
 
@@ -26,6 +28,8 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+
   // --- loading state ---
   bool _isLoading = true;
   String? _errorMessage;
@@ -35,6 +39,7 @@ class _HomeScreenState extends State<HomeScreen> {
   List<AppProduct> _visibleProducts = [];
   final List<String> _categoryLabels = ['All'];
   String? _selectedCategoryName = 'All';
+  String _searchQuery = '';
 
   // --- hero slider data ---
   final PageController _heroController = PageController(viewportFraction: 0.9);
@@ -171,18 +176,148 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _applyFilter() {
-    if (_selectedCategoryName == null || _selectedCategoryName == 'All') {
-      _visibleProducts = List.of(_allProducts);
-    } else {
-      _visibleProducts = _allProducts
-          .where((p) => p.categoryName == _selectedCategoryName)
-          .toList();
+    Iterable<AppProduct> base = _allProducts;
+
+    if (_selectedCategoryName != null && _selectedCategoryName != 'All') {
+      base = base.where((p) => p.categoryName == _selectedCategoryName);
     }
+
+    final query = _searchQuery.trim().toLowerCase();
+    if (query.isNotEmpty) {
+      base = base.where((p) => p.name.toLowerCase().contains(query));
+    }
+
+    _visibleProducts = base.toList();
   }
 
   void _onCategorySelected(String label) {
     setState(() {
       _selectedCategoryName = label;
+      _applyFilter();
+    });
+  }
+
+  void _openProfileSheet() {
+    Navigator.pop(context);
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const ProfileScreen()),
+    );
+  }
+
+  void _openOrders() {
+    Navigator.pop(context);
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const MyOrdersScreen()),
+    );
+  }
+
+  void _showComingSoon(String feature) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('$feature segera hadir')));
+  }
+
+  Future<void> _logout() async {
+    Navigator.pop(context);
+    await supabase.auth.signOut();
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Berhasil logout')));
+  }
+
+  void _openSearchSheet() {
+    final controller = TextEditingController(text: _searchQuery);
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) {
+        return Padding(
+          padding: EdgeInsets.only(
+            left: 20,
+            right: 20,
+            top: 16,
+            bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.search, color: _textDark),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: TextField(
+                      controller: controller,
+                      autofocus: true,
+                      decoration: const InputDecoration(
+                        hintText: 'Cari produk, brand, atau kategori',
+                        border: InputBorder.none,
+                      ),
+                      onChanged: (value) {
+                        setState(() {
+                          _searchQuery = value;
+                          _applyFilter();
+                        });
+                      },
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () {
+                      controller.clear();
+                      setState(() {
+                        _searchQuery = '';
+                        _applyFilter();
+                      });
+                      Navigator.pop(context);
+                    },
+                    icon: const Icon(Icons.close, color: _textDark),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _SearchChip(
+                    label: 'Air Max',
+                    onTap: () => _applySearchSuggestion('Air Max'),
+                  ),
+                  _SearchChip(
+                    label: 'Jordan',
+                    onTap: () => _applySearchSuggestion('Jordan'),
+                  ),
+                  _SearchChip(
+                    label: 'Running',
+                    onTap: () => _applySearchSuggestion('Running'),
+                  ),
+                  _SearchChip(
+                    label: 'Best seller',
+                    onTap: () => _applySearchSuggestion('best'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Hasil: ${_visibleProducts.length} produk',
+                style: const TextStyle(fontSize: 12, color: _textLight),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _applySearchSuggestion(String keyword) {
+    setState(() {
+      _searchQuery = keyword;
       _applyFilter();
     });
   }
@@ -193,6 +328,24 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      key: _scaffoldKey,
+      drawer: _AppDrawer(
+        onProfile: _openProfileSheet,
+        onOrders: _openOrders,
+        onWishlist: () {
+          Navigator.pop(context);
+          _showComingSoon('Wishlist');
+        },
+        onVouchers: () {
+          Navigator.pop(context);
+          _showComingSoon('Voucher & Promo');
+        },
+        onHelp: () {
+          Navigator.pop(context);
+          _showComingSoon('Bantuan');
+        },
+        onLogout: _logout,
+      ),
       // background dengan gradasi tipis biar nggak polos
       body: Container(
         decoration: const BoxDecoration(
@@ -365,7 +518,7 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Row(
         children: [
           IconButton(
-            onPressed: () {},
+            onPressed: () => _scaffoldKey.currentState?.openDrawer(),
             icon: const Icon(Icons.menu_rounded, color: _textDark),
           ),
           const Expanded(
@@ -381,7 +534,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
           IconButton(
-            onPressed: () {},
+            onPressed: _openSearchSheet,
             icon: const Icon(Icons.search_rounded, color: _textDark),
           ),
           // icon cart + badge
@@ -438,6 +591,93 @@ class _HomeScreenState extends State<HomeScreen> {
 // ---------------------------------------------------------------------------
 // SUB WIDGETS
 // ---------------------------------------------------------------------------
+
+class _AppDrawer extends StatelessWidget {
+  const _AppDrawer({
+    required this.onProfile,
+    required this.onOrders,
+    required this.onWishlist,
+    required this.onVouchers,
+    required this.onHelp,
+    required this.onLogout,
+  });
+
+  final VoidCallback onProfile;
+  final VoidCallback onOrders;
+  final VoidCallback onWishlist;
+  final VoidCallback onVouchers;
+  final VoidCallback onHelp;
+  final VoidCallback onLogout;
+
+  @override
+  Widget build(BuildContext context) {
+    return Drawer(
+      child: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: const [
+                  CircleAvatar(
+                    radius: 24,
+                    backgroundColor: _primaryBrown,
+                    child: Icon(Icons.person, color: Colors.white),
+                  ),
+                  SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Akun Saya',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: _textDark,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.person_outline),
+              title: const Text('Profil & Akun'),
+              onTap: onProfile,
+            ),
+            ListTile(
+              leading: const Icon(Icons.receipt_long_outlined),
+              title: const Text('Pesanan Saya'),
+              onTap: onOrders,
+            ),
+            ListTile(
+              leading: const Icon(Icons.favorite_border),
+              title: const Text('Wishlist'),
+              onTap: onWishlist,
+            ),
+            ListTile(
+              leading: const Icon(Icons.local_offer_outlined),
+              title: const Text('Voucher & Promo'),
+              onTap: onVouchers,
+            ),
+            ListTile(
+              leading: const Icon(Icons.help_outline),
+              title: const Text('Bantuan'),
+              onTap: onHelp,
+            ),
+            const Spacer(),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.logout),
+              title: const Text('Logout'),
+              onTap: onLogout,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 class _WelcomeHeader extends StatelessWidget {
   const _WelcomeHeader();
@@ -651,6 +891,38 @@ class _HeroBannerCard extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SearchChip extends StatelessWidget {
+  const _SearchChip({required this.label, required this.onTap});
+
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 8,
+              offset: const Offset(0, 3),
+            ),
+          ],
+        ),
+        child: Text(
+          label,
+          style: const TextStyle(color: _textDark, fontWeight: FontWeight.w600),
         ),
       ),
     );

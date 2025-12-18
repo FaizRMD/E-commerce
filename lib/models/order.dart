@@ -6,8 +6,10 @@ class OrderModel {
   final String id; // uuid
   final String? userId; // auth.users.id
   final int total; // kolom `total`
-  final String status; // pending, paid, dll
+  final String status; // pending, paid, shipped, completed, cancelled
   final String paymentMethod;
+  final String? trackingNumber;
+  final DateTime? estimatedDelivery;
   final DateTime createdAt;
 
   /// Item detail (biasanya query terpisah).
@@ -20,6 +22,8 @@ class OrderModel {
     required this.paymentMethod,
     required this.createdAt,
     this.userId,
+    this.trackingNumber,
+    this.estimatedDelivery,
     this.items = const [],
   });
 
@@ -30,6 +34,10 @@ class OrderModel {
       total: map['total'] as int,
       status: map['status'] as String? ?? 'pending',
       paymentMethod: map['payment_method'] as String? ?? 'unknown',
+      trackingNumber: map['tracking_number'] as String?,
+      estimatedDelivery: map['estimated_delivery'] != null
+          ? DateTime.parse(map['estimated_delivery'] as String)
+          : null,
       createdAt: DateTime.parse(map['created_at'] as String),
     );
   }
@@ -41,6 +49,8 @@ class OrderModel {
       total: total,
       status: status,
       paymentMethod: paymentMethod,
+      trackingNumber: trackingNumber,
+      estimatedDelivery: estimatedDelivery,
       createdAt: createdAt,
       items: newItems,
     );
@@ -53,6 +63,8 @@ class OrderModel {
       'total': total,
       'status': status,
       'payment_method': paymentMethod,
+      'tracking_number': trackingNumber,
+      'estimated_delivery': estimatedDelivery?.toIso8601String(),
       'created_at': createdAt.toIso8601String(),
     };
   }

@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import 'login_form.dart';
+import 'register_admin.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -81,11 +82,22 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
       if (user != null) {
         // 2. upsert ke tabel profiles (id = auth.users.id)
-        await _supabase.from('profiles').upsert({
-          'id': user.id, // penting: sama dengan auth.users.id
-          'full_name': fullName,
-          'email': email,
-        });
+        try {
+          await _supabase.from('profiles').upsert({
+            'id': user.id, // penting: sama dengan auth.users.id
+            'full_name': fullName,
+            'email': email,
+            'role': 'user', // tambahkan role default
+          });
+          print('✅ Profile created successfully'); // Debug
+        } catch (e) {
+          print('❌ Error creating profile: $e'); // Debug
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Warning: Profile error: $e')),
+            );
+          }
+        }
 
         if (!mounted) return;
 
@@ -413,6 +425,38 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                     fontSize: 13,
                                     fontWeight: FontWeight.w500,
                                     color: primaryBrown,
+                                  ),
+                                ),
+                              ),
+
+                              const SizedBox(height: 8),
+
+                              // Link ke register admin
+                              OutlinedButton.icon(
+                                onPressed: () {
+                                  Navigator.pushReplacement(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) =>
+                                          const RegisterAdminScreen(),
+                                    ),
+                                  );
+                                },
+                                icon: const Icon(
+                                  Icons.admin_panel_settings,
+                                  size: 18,
+                                ),
+                                label: Text(
+                                  'Daftar sebagai Admin',
+                                  style: GoogleFonts.poppins(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                                style: OutlinedButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 8,
                                   ),
                                 ),
                               ),

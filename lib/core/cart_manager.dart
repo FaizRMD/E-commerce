@@ -1,198 +1,341 @@
 // lib/core/cart_manager.dart
 import 'package:flutter/foundation.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'supabase_client.dart';
 import '../models/product.dart';
 
-/// Manager keranjang belanja.
-/// - Menyimpan ID order yang status-nya 'cart' di tabel `orders`.
-/// - Menyimpan item di `order_items`.
-/// - Menyediakan notifier untuk badge di icon cart.
-class CartManager {
-  CartManager._();
+/// Representasi item di keranjang (satu baris dari tabel order_items).
+class CartItem {
+  final int id; // order_items.id
+  final String orderId; // orders.id (uuid)
+  final int productId;
 
-  static final CartManager instance = CartManager._();
+  final String productName;
+  final String? productImageUrl;
 
-  final SupabaseClient _supabase = Supabase.instance.client;
+  int quantity; // mapping ke kolom qty
+  final int unitPrice; // mapping ke kolom price
 
-  /// id order (uuid) yang status-nya 'cart'
+  CartItem({
+    required this.id,
+    required this.orderId,
+    required this.productId,
+    required this.productName,
+    required this.productImageUrl,
+    required this.quantity,
+    required this.unitPrice,
+  });
+
+  int get lineTotal => quantity * unitPrice;
+}
+
+/// Mengelola keranjang belanja di Supabase.
+class CartManager extends ChangeNotifier {
+  CartManager._internal();
+
+  static final CartManager instance = CartManager._internal();
+
+  /// id orders (uuid) untuk order dengan status = 'cart'
   String? _currentCartOrderId;
 
-  /// Total qty item di keranjang (buat badge di icon)
+  final List<CartItem> _items = [];
+
+  /// Notifier jumlah qty untuk badge icon cart.
   final ValueNotifier<int> cartCountNotifier = ValueNotifier<int>(0);
 
-  /// Dipanggil saat app start / user masuk ke home.
-  /// Baca keranjang terakhir milik user dari Supabase.
+  List<CartItem> get items => List.unmodifiable(_items);
+
+  int get totalPrice => _items.fold<int>(0, (sum, it) => sum + it.lineTotal);
+
+  int get totalQty => _items.fold<int>(0, (sum, it) => sum + it.quantity);
+
+  // ---------------------------------------------------------------------------
+  // INITIAL LOAD
+  // ---------------------------------------------------------------------------
+
+  /// Ambil order status 'cart' + order_items-nya untuk user saat ini.
   Future<void> initFromServer() async {
-    final user = _supabase.auth.currentUser;
+    final user = supabase.auth.currentUser;
+
     if (user == null) {
       _currentCartOrderId = null;
+      _items.clear();
       cartCountNotifier.value = 0;
+      notifyListeners();
       return;
     }
 
-    // Cari order terakhir dengan status 'cart'
-    final List<dynamic> orders = await _supabase
+    // cari order status 'cart'
+    final existingOrder = await supabase
         .from('orders')
         .select('id')
         .eq('user_id', user.id)
         .eq('status', 'cart')
-        .order('created_at', ascending: false)
         .limit(1);
 
-    if (orders.isEmpty) {
+    if (existingOrder.isEmpty) {
       _currentCartOrderId = null;
+      _items.clear();
       cartCountNotifier.value = 0;
+      notifyListeners();
       return;
     }
 
-    final Map<String, dynamic> map = orders.first;
-    final String orderId = map['id'] as String;
-    _currentCartOrderId = orderId;
+    _currentCartOrderId = existingOrder.first['id'] as String;
 
-    // Hitung total qty dari order_items
-    final List<dynamic> items = await _supabase
+    // pakai order_id yang pasti non-null
+    final String cartId = _currentCartOrderId!;
+
+    final itemRows = await supabase
         .from('order_items')
-        .select('qty')
-        .eq('order_id', orderId);
+        .select(
+          // ⬇️ sesuai dengan tabel kamu: qty, price, subtotal
+          'id, order_id, product_id, qty, price, subtotal, products(name, image_url)',
+        )
+        .eq('order_id', cartId);
 
-    int totalQty = 0;
-    for (final Map<String, dynamic> r in items) {
-      totalQty += (r['qty'] as int? ?? 0);
-    }
+    _items
+      ..clear()
+      ..addAll(
+        (itemRows as List<dynamic>).map((row) {
+          final map = row as Map<String, dynamic>;
+          final product = map['products'] as Map<String, dynamic>?;
+
+          return CartItem(
+            id: map['id'] as int,
+            orderId: map['order_id'] as String,
+            productId: map['product_id'] as int,
+            quantity: map['qty'] as int, // ⬅ qty
+            unitPrice: map['price'] as int, // ⬅ price
+            productName: product?['name'] as String? ?? 'Produk',
+            productImageUrl: product?['image_url'] as String?,
+          );
+        }),
+      );
+
     cartCountNotifier.value = totalQty;
+    notifyListeners();
   }
 
-  /// Tambah produk ke keranjang.
-  /// Kalau belum punya order 'cart', akan dibuatkan dulu.
-  Future<void> addProduct(AppProduct product, {int qty = 1}) async {
-    if (qty <= 0) return;
+  // ---------------------------------------------------------------------------
+  // UTILS
+  // ---------------------------------------------------------------------------
 
-    final user = _supabase.auth.currentUser;
+  /// Pastikan sudah ada order status 'cart' untuk user sekarang.
+  Future<void> _ensureCartOrder() async {
+    if (_currentCartOrderId != null) return;
+
+    final user = supabase.auth.currentUser;
     if (user == null) {
       throw Exception('Silakan login terlebih dahulu');
     }
 
-    // 1. Pastikan sudah ada order 'cart'
-    String? orderId = _currentCartOrderId;
-    if (orderId == null) {
-      final userName =
-          (user.userMetadata?['full_name'] as String?) ?? user.email ?? 'User';
+    // cek lagi di DB, barangkali sudah ada
+    final existingOrder = await supabase
+        .from('orders')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('status', 'cart')
+        .limit(1);
 
-      final Map<String, dynamic> inserted = await _supabase
-          .from('orders')
-          .insert({
-            'user_id': user.id,
-            'user_name': userName,
-            'customer_name': userName,
-            'status': 'cart',
-            'payment_method': 'cash',
-            'total': 0,
-            'total_amount': 0,
-          })
-          .select('id')
-          .single();
-
-      orderId = inserted['id'] as String;
-      _currentCartOrderId = orderId;
+    if (existingOrder.isNotEmpty) {
+      _currentCartOrderId = existingOrder.first['id'] as String;
+      return;
     }
 
-    final int price = product.price;
+    final String userName =
+        (user.userMetadata?['full_name'] as String?) ?? user.email ?? 'User';
 
-    // 2. Cek apakah produk sudah ada di order_items
-    final List<dynamic> existing = await _supabase
-        .from('order_items')
-        .select('id, qty')
-        .eq('order_id', orderId)
-        .eq('product_id', product.id);
+    final insertData = <String, dynamic>{
+      'user_id': user.id,
+      'user_name': userName,
+      'customer_name': userName,
+      'status': 'cart',
+      'payment_method': 'cash',
+      'total': 0,
+      'total_amount': 0,
+      'note': null,
+    };
 
-    if (existing.isEmpty) {
-      // insert baru
-      await _supabase.from('order_items').insert({
+    final inserted = await supabase
+        .from('orders')
+        .insert(insertData)
+        .select('id')
+        .single();
+
+    _currentCartOrderId = inserted['id'] as String;
+  }
+
+  Future<void> _syncCartOrderTotals() async {
+    if (_currentCartOrderId == null) return;
+    final String cartId = _currentCartOrderId!;
+
+    final int sum = totalPrice;
+
+    await supabase
+        .from('orders')
+        .update({'total': sum, 'total_amount': sum})
+        .eq('id', cartId);
+  }
+
+  // ---------------------------------------------------------------------------
+  // MUTASI KERANJANG
+  // ---------------------------------------------------------------------------
+
+  /// Tambah produk ke keranjang.
+  Future<void> addProduct(AppProduct product, {int qty = 1}) async {
+    if (qty <= 0) return;
+
+    await _ensureCartOrder();
+    final String orderId = _currentCartOrderId!;
+
+    // cek apakah sudah ada item dengan product_id ini
+    final index = _items.indexWhere((item) => item.productId == product.id);
+
+    if (index != -1) {
+      // update qty + subtotal
+      final existing = _items[index];
+      final newQty = existing.quantity + qty;
+      final newSubtotal = newQty * existing.unitPrice;
+
+      await supabase
+          .from('order_items')
+          .update({'qty': newQty, 'subtotal': newSubtotal})
+          .eq('id', existing.id);
+
+      existing.quantity = newQty;
+    } else {
+      // insert baris baru
+      final subtotal = qty * product.price;
+      final insertData = <String, dynamic>{
         'order_id': orderId,
         'product_id': product.id,
         'qty': qty,
-        'price': price,
-        'subtotal': price * qty,
-      });
-    } else {
-      final Map<String, dynamic> row = existing.first;
-      final int oldQty = row['qty'] as int? ?? 0;
-      final int newQty = oldQty + qty;
-
-      await _supabase
-          .from('order_items')
-          .update({'qty': newQty, 'subtotal': newQty * price})
-          .eq('id', row['id']);
-    }
-
-    // 3. Recalculate total order dan badge
-    await _recalculateTotals(orderId);
-  }
-
-  /// Mengambil item keranjang untuk ditampilkan di sheet / halaman cart.
-  ///
-  /// Hasilnya list map: {name, imageUrl, qty, price, subtotal}
-  Future<List<Map<String, dynamic>>> fetchCartItems() async {
-    final orderId = _currentCartOrderId;
-    if (orderId == null) return [];
-
-    final List<dynamic> rows = await _supabase
-        .from('order_items')
-        .select('qty, price, subtotal, products(name, image_url)')
-        .eq('order_id', orderId);
-
-    return rows.map<Map<String, dynamic>>((raw) {
-      final Map<String, dynamic> map = raw;
-      final Map<String, dynamic>? product =
-          map['products'] as Map<String, dynamic>?;
-
-      return {
-        'name': product?['name'] as String? ?? 'Produk',
-        'imageUrl': product?['image_url'] as String?,
-        'qty': map['qty'] as int? ?? 0,
-        'price': map['price'] as int? ?? 0,
-        'subtotal': map['subtotal'] as int? ?? 0,
+        'price': product.price,
+        'subtotal': subtotal,
       };
-    }).toList();
-  }
 
-  /// Kosongkan keranjang (opsional, misal setelah checkout).
-  Future<void> clearCart() async {
-    final orderId = _currentCartOrderId;
-    if (orderId == null) return;
+      final inserted = await supabase
+          .from('order_items')
+          .insert(insertData)
+          .select('id')
+          .single();
 
-    await _supabase.from('order_items').delete().eq('order_id', orderId);
-
-    await _supabase
-        .from('orders')
-        .update({'status': 'cleared', 'total': 0, 'total_amount': 0})
-        .eq('id', orderId);
-
-    _currentCartOrderId = null;
-    cartCountNotifier.value = 0;
-  }
-
-  /// Hitung ulang total_amount di orders + update badge qty.
-  Future<void> _recalculateTotals(String orderId) async {
-    final List<dynamic> rows = await _supabase
-        .from('order_items')
-        .select('qty, subtotal')
-        .eq('order_id', orderId);
-
-    int totalAmount = 0;
-    int totalQty = 0;
-
-    for (final Map<String, dynamic> r in rows) {
-      totalQty += (r['qty'] as int? ?? 0);
-      totalAmount += (r['subtotal'] as int? ?? 0);
+      final newItem = CartItem(
+        id: inserted['id'] as int,
+        orderId: orderId,
+        productId: product.id,
+        productName: product.name,
+        productImageUrl: product.imageUrl,
+        quantity: qty,
+        unitPrice: product.price,
+      );
+      _items.add(newItem);
     }
 
-    await _supabase
-        .from('orders')
-        .update({'total_amount': totalAmount, 'total': totalAmount})
-        .eq('id', orderId);
-
+    await _syncCartOrderTotals();
     cartCountNotifier.value = totalQty;
+    notifyListeners();
+  }
+
+  /// Ubah qty (kalau 0 atau kurang, item dihapus).
+  Future<void> updateQty(int itemId, int newQty) async {
+    final index = _items.indexWhere((item) => item.id == itemId);
+    if (index == -1) return;
+
+    if (newQty <= 0) {
+      await removeItem(itemId);
+      return;
+    }
+
+    final item = _items[index];
+    final newSubtotal = newQty * item.unitPrice;
+
+    await supabase
+        .from('order_items')
+        .update({'qty': newQty, 'subtotal': newSubtotal})
+        .eq('id', itemId);
+
+    item.quantity = newQty;
+    await _syncCartOrderTotals();
+    cartCountNotifier.value = totalQty;
+    notifyListeners();
+  }
+
+  /// Hapus 1 item dari keranjang.
+  Future<void> removeItem(int itemId) async {
+    await supabase.from('order_items').delete().eq('id', itemId);
+    _items.removeWhere((e) => e.id == itemId);
+    await _syncCartOrderTotals();
+    cartCountNotifier.value = totalQty;
+    notifyListeners();
+  }
+
+  // ---------------------------------------------------------------------------
+  // CHECKOUT ITEM TERPILIH
+  // ---------------------------------------------------------------------------
+
+  /// Checkout hanya item yang dipilih (list id dari order_items).
+  Future<void> checkoutSelected(List<int> selectedItemIds) async {
+    if (selectedItemIds.isEmpty) return;
+
+    final user = supabase.auth.currentUser;
+    if (user == null) {
+      throw Exception('Silakan login terlebih dahulu');
+    }
+
+    final selectedItems = _items
+        .where((item) => selectedItemIds.contains(item.id))
+        .toList();
+
+    if (selectedItems.isEmpty) return;
+
+    final int totalSelected = selectedItems.fold<int>(
+      0,
+      (sum, item) => sum + item.lineTotal,
+    );
+
+    final String userName =
+        (user.userMetadata?['full_name'] as String?) ?? user.email ?? 'User';
+
+    // 1. buat order baru (status pending / menunggu pembayaran)
+    final newOrder = await supabase
+        .from('orders')
+        .insert(<String, dynamic>{
+          'user_id': user.id,
+          'user_name': userName,
+          'customer_name': userName,
+          'status': 'pending',
+          'payment_method': 'cash',
+          'total': totalSelected,
+          'total_amount': totalSelected,
+          'note': null,
+        })
+        .select('id')
+        .single();
+
+    final String newOrderId = newOrder['id'] as String;
+
+    // 2. copy item ke order_items untuk order baru
+    for (final item in selectedItems) {
+      await supabase.from('order_items').insert(<String, dynamic>{
+        'order_id': newOrderId,
+        'product_id': item.productId,
+        'qty': item.quantity,
+        'price': item.unitPrice,
+        'subtotal': item.lineTotal,
+      });
+    }
+
+    // 3. hapus item dari keranjang (order cart)
+    for (final item in selectedItems) {
+      await supabase.from('order_items').delete().eq('id', item.id);
+      _items.removeWhere((e) => e.id == item.id);
+    }
+
+    // 4. sinkronkan total keranjang yang tersisa
+    await _syncCartOrderTotals();
+    cartCountNotifier.value = totalQty;
+    notifyListeners();
   }
 }

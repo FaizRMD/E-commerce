@@ -1,12 +1,13 @@
 // lib/pages/product/details_screen.dart
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../core/ui_constants.dart';
 import '../../models/product.dart';
 import '../../core/cart_manager.dart' as cart;
+import '../cart/cart_screen.dart';
 
 /// Halaman detail produk.
+/// Responsive untuk mobile & web (lebar max dibatasi).
 class DetailsScreen extends StatelessWidget {
   const DetailsScreen({super.key, required this.product});
 
@@ -15,6 +16,7 @@ class DetailsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
+    final maxWidth = size.width > 900 ? 900.0 : size.width;
 
     return Scaffold(
       backgroundColor: kBackgroundColor,
@@ -25,48 +27,63 @@ class DetailsScreen extends StatelessWidget {
           icon: const Icon(Icons.arrow_back_ios_new_rounded, color: kTextColor),
           onPressed: () => Navigator.pop(context),
         ),
+        title: const Text(
+          'Detail Produk',
+          style: TextStyle(
+            color: kTextColor,
+            fontWeight: FontWeight.w600,
+            fontSize: 16,
+          ),
+        ),
+        centerTitle: true,
         actions: [
-          // icon keranjang di detail (optional) – hanya icon saja
           IconButton(
             onPressed: () {},
             icon: const Icon(Icons.shopping_bag_outlined, color: kTextColor),
           ),
         ],
       ),
-      body: SizedBox(
-        height: size.height,
-        child: Stack(
-          children: [
-            // KARTU PUTIH BAGIAN BAWAH
-            Container(
-              margin: EdgeInsets.only(top: size.height * 0.36),
-              padding: EdgeInsets.only(
-                top: size.height * 0.12,
-                left: kDefaultPadding,
-                right: kDefaultPadding,
-                bottom: 16,
-              ),
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _ColorAndSize(product: product),
-                  const SizedBox(height: 12),
-                  _Description(product: product),
-                  const SizedBox(height: 16),
-                  const _CounterWithFavBtn(),
-                  const SizedBox(height: 20),
-                  _AddToCartAndBuyNow(product: product),
-                ],
-              ),
-            ),
+      body: Center(
+        child: SizedBox(
+          width: maxWidth,
+          child: SizedBox(
+            height: size.height,
+            child: Stack(
+              children: [
+                // KARTU PUTIH BAGIAN BAWAH
+                Container(
+                  margin: EdgeInsets.only(top: size.height * 0.36),
+                  padding: EdgeInsets.only(
+                    top: size.height * 0.12,
+                    left: kDefaultPadding,
+                    right: kDefaultPadding,
+                    bottom: 16,
+                  ),
+                  decoration: const BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.vertical(
+                      top: Radius.circular(24),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _ColorAndSize(product: product),
+                      const SizedBox(height: 12),
+                      _Description(product: product),
+                      const SizedBox(height: 16),
+                      const _CounterWithFavBtn(),
+                      const SizedBox(height: 20),
+                      _AddToCartAndBuyNow(product: product),
+                    ],
+                  ),
+                ),
 
-            // BAGIAN ATAS: TITLE + GAMBAR BESAR
-            _ProductTitleWithImage(product: product),
-          ],
+                // BAGIAN ATAS: TITLE + GAMBAR BESAR
+                _ProductTitleWithImage(product: product),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -139,12 +156,12 @@ class _ProductTitleWithImage extends StatelessWidget {
                       end: Alignment.bottomRight,
                     ),
                   ),
-                  child: product.imageUrl != null && product.imageUrl!.isNotEmpty
+                  child:
+                      product.imageUrl != null && product.imageUrl!.isNotEmpty
                       ? Image.network(
                           product.imageUrl!,
                           fit: BoxFit.cover,
-                          errorBuilder: (context, error, stack) =>
-                              const Center(
+                          errorBuilder: (context, error, stack) => const Center(
                             child: Icon(
                               Icons.broken_image_outlined,
                               size: 60,
@@ -247,7 +264,8 @@ class _Description extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final text = product.description ??
+    final text =
+        product.description ??
         'Sneaker nyaman dengan material berkualitas untuk aktivitas harianmu.';
 
     return Text(
@@ -261,7 +279,7 @@ class _Description extends StatelessWidget {
   }
 }
 
-/// Counter jumlah item + tombol favorit (ini hanya untuk tampilan).
+/// Counter jumlah item + tombol favorit (ini hanya visual, tidak ke DB).
 class _CounterWithFavBtn extends StatefulWidget {
   const _CounterWithFavBtn();
 
@@ -333,79 +351,39 @@ class _CounterWithFavBtnState extends State<_CounterWithFavBtn> {
 }
 
 /// Baris bawah: icon cart, tombol Add to cart, tombol Buy now.
+/// Menggunakan CartManager (keranjang tersimpan di Supabase).
 class _AddToCartAndBuyNow extends StatelessWidget {
   const _AddToCartAndBuyNow({required this.product});
 
   final AppProduct product;
 
   Future<void> _handleAddToCart(BuildContext context) async {
+    final cm = cart.CartManager.instance;
     try {
-      await cart.CartManager.instance.addProduct(product, qty: 1);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Ditambahkan ke keranjang')),
-      );
+      await cm.addProduct(product, qty: 1);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Ditambahkan ke keranjang')));
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Gagal menambah ke keranjang: $e')),
+        SnackBar(content: Text('Gagal menambahkan ke keranjang: $e')),
       );
     }
   }
 
   Future<void> _handleBuyNow(BuildContext context) async {
-    final supabase = Supabase.instance.client;
-    final user = supabase.auth.currentUser;
-
-    if (user == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Silakan login terlebih dahulu')),
-      );
-      return;
-    }
-
-    final userName =
-        (user.userMetadata?['full_name'] as String?) ?? user.email ?? 'User';
-    final int qty = 1;
-    final int totalAmount = product.price * qty;
-
+    final cm = cart.CartManager.instance;
     try {
-      // 1) buat order status 'pending'
-      final insertedOrder = await supabase
-          .from('orders')
-          .insert({
-            'user_id': user.id,
-            'user_name': userName,
-            'customer_name': userName,
-            'total': totalAmount,
-            'total_amount': totalAmount,
-            'status': 'pending',
-            'payment_method': 'cash',
-            'note': null,
-          })
-          .select('id')
-          .single();
-
-      final String orderId = insertedOrder['id'] as String;
-
-      // 2) order_items
-      await supabase.from('order_items').insert({
-        'order_id': orderId,
-        'product_id': product.id,
-        'qty': qty,
-        'price': product.price,
-        'subtotal': totalAmount,
-      });
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Pesanan berhasil dibuat')),
+      await cm.addProduct(product, qty: 1);
+      await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const CartScreen()),
       );
-    } on PostgrestException catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Gagal membuat pesanan: ${e.message}')),
-      );
-    } catch (_) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Terjadi kesalahan, coba lagi nanti')),
-      );
+      await cm.initFromServer(); // refresh badge setelah kembali
+    } catch (e) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Gagal memproses: $e')));
     }
   }
 
