@@ -5,6 +5,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../home/home_screen.dart';
+import '../admin/admin_dashboard.dart';
 import 'register.dart';
 
 /// Halaman form login.
@@ -79,10 +80,23 @@ class _LoginFormState extends State<LoginForm> {
       if (res.user != null) {
         _trigSuccess?.fire();
 
+        // Ambil role untuk tentukan tujuan
+        final profile = await _supabase
+            .from('profiles')
+            .select('role')
+            .eq('id', res.user!.id)
+            .maybeSingle();
+        final role = profile?['role'] as String?;
+
         if (!mounted) return;
-        Navigator.pushReplacement(
+        Navigator.pushAndRemoveUntil(
           context,
-          MaterialPageRoute(builder: (_) => const HomeScreen()),
+          MaterialPageRoute(
+            builder: (_) => role == 'admin'
+                ? const AdminDashboardScreen()
+                : const HomeScreen(),
+          ),
+          (route) => false,
         );
       } else {
         _trigFail?.fire();
@@ -157,7 +171,10 @@ class _LoginFormState extends State<LoginForm> {
                           )
                           .animate()
                           .fadeIn(duration: 600.ms)
-                          .scale(begin:const Offset(0.9, 0.9), curve: Curves.easeOutBack),
+                          .scale(
+                            begin: const Offset(0.9, 0.9),
+                            curve: Curves.easeOutBack,
+                          ),
 
                       const SizedBox(height: 16),
 
