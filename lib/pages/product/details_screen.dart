@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/ui_constants.dart';
+import '../../core/supabase_client.dart';
 import '../../models/product.dart';
 import '../../core/cart_manager.dart' as cart;
 import '../cart/cart_screen.dart';
@@ -72,7 +73,7 @@ class DetailsScreen extends StatelessWidget {
                       const SizedBox(height: 12),
                       _Description(product: product),
                       const SizedBox(height: 16),
-                      const _CounterWithFavBtn(),
+                      _CounterWithFavBtn(product: product),
                       const SizedBox(height: 20),
                       _AddToCartAndBuyNow(product: product),
                     ],
@@ -279,9 +280,11 @@ class _Description extends StatelessWidget {
   }
 }
 
-/// Counter jumlah item + tombol favorit (ini hanya visual, tidak ke DB).
+/// Counter jumlah item + tombol favorit yang simpan ke Supabase wishlist.
 class _CounterWithFavBtn extends StatefulWidget {
-  const _CounterWithFavBtn();
+  const _CounterWithFavBtn({required this.product});
+
+  final AppProduct product;
 
   @override
   State<_CounterWithFavBtn> createState() => _CounterWithFavBtnState();
@@ -290,18 +293,86 @@ class _CounterWithFavBtn extends StatefulWidget {
 class _CounterWithFavBtnState extends State<_CounterWithFavBtn> {
   int _numOfItems = 1;
   bool _isFav = false;
+  bool _isLoadingFav = false;
 
-  void _increment() {
-    setState(() {
-      _numOfItems++;
-    });
+  @override
+  void initState() {
+    super.initState();
+    _checkIfInWishlist();
   }
 
-  void _decrement() {
-    if (_numOfItems > 1) {
-      setState(() {
-        _numOfItems--;
-      });
+  Future<void> _checkIfInWishlist() async {
+    try {
+      final user = supabase.auth.currentUser;
+      if (user == null) return;
+
+      final result = await supabase
+          .from('wishlist')
+          .select()
+          .eq('user_id', user.id)
+          .eq('product_id', widget.product.id)
+          .maybeSingle();
+
+      if (mounted) {
+        setState(() {
+          _isFav = result != null;
+        });
+      }
+    } catch (_) {
+      // Silent fail
+    }
+  }
+
+  Future<void> _toggleWishlist() async {
+    final user = supabase.auth.currentUser;
+    if (user == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Anda harus login terlebih dahulu')),
+      );
+      return;
+    }
+
+    setState(() => _isLoadingFav = true);
+
+    try {
+      if (_isFav) {
+        // Hapus dari wishlist
+        await supabase
+            .from('wishlist')
+            .delete()
+            .eq('user_id', user.id)
+            .eq('product_id', widget.product.id);
+
+        if (mounted) {
+          setState(() => _isFav = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Dihapus dari wishlist')),
+          );
+        }
+      } else {
+        // Tambah ke wishlist
+        await supabase.from('wishlist').insert({
+          'user_id': user.id,
+          'product_id': widget.product.id,
+        });
+
+        if (mounted) {
+          setState(() => _isFav = true);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Ditambahkan ke wishlist')),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: $e')));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoadingFav = false);
+      }
     }
   }
 
@@ -318,7 +389,11 @@ class _CounterWithFavBtnState extends State<_CounterWithFavBtn> {
             children: [
               IconButton(
                 icon: const Icon(Icons.remove),
-                onPressed: _decrement,
+                onPressed: () {
+                  if (_numOfItems > 1) {
+                    setState(() => _numOfItems--);
+                  }
+                },
                 color: kTextColor,
               ),
               Text(
@@ -327,24 +402,39 @@ class _CounterWithFavBtnState extends State<_CounterWithFavBtn> {
               ),
               IconButton(
                 icon: const Icon(Icons.add),
-                onPressed: _increment,
+                onPressed: () {
+                  setState(() => _numOfItems++);
+                },
                 color: kTextColor,
               ),
             ],
           ),
         ),
         const Spacer(),
-        IconButton(
-          onPressed: () {
-            setState(() {
-              _isFav = !_isFav;
-            });
-          },
-          icon: Icon(
-            _isFav ? Icons.favorite_rounded : Icons.favorite_border_rounded,
-            color: _isFav ? Colors.redAccent : Colors.grey.shade400,
-          ),
-        ),
+        _isLoadingFav
+            ? SizedBox(
+                width: 48,
+                height: 48,
+                child: Center(
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation(Colors.grey.shade400),
+                    ),
+                  ),
+                ),
+              )
+            : IconButton(
+                onPressed: _toggleWishlist,
+                icon: Icon(
+                  _isFav
+                      ? Icons.favorite_rounded
+                      : Icons.favorite_border_rounded,
+                  color: _isFav ? Colors.redAccent : Colors.grey.shade400,
+                ),
+              ),
       ],
     );
   }

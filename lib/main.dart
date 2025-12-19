@@ -19,9 +19,7 @@ Future<void> main() async {
         'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFhZnlocnNlbGdtZmlmbGxzaGJpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQwMjcxNzUsImV4cCI6MjA3OTYwMzE3NX0.caFwniqhD9j4qtwKgMazcX0AcqK_SX0El2W9PwZCCBo',
     // Pastikan session dipersist dan token auto-refresh supaya refresh/hot-reload
     // tidak mengembalikan ke login.
-    authOptions: const FlutterAuthClientOptions(
-      autoRefreshToken: true,
-    ),
+    authOptions: const FlutterAuthClientOptions(autoRefreshToken: true),
   );
 
   runApp(const MyApp());
@@ -81,8 +79,8 @@ class _AuthGateState extends State<AuthGate> {
             .from('profiles')
             .select('role')
             .eq('id', session.user.id)
-            .single();
-        final role = profile['role'] as String?;
+            .maybeSingle();
+        final role = profile?['role'] as String?;
 
         if (mounted) {
           setState(() {
@@ -92,11 +90,19 @@ class _AuthGateState extends State<AuthGate> {
         }
       } catch (e) {
         if (mounted) {
-          setState(() => _isLoading = false);
+          setState(() {
+            _isAdmin = false;
+            _isLoading = false;
+          });
         }
       }
     } else {
-      setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() {
+          _isAdmin = false;
+          _isLoading = false;
+        });
+      }
     }
   }
 

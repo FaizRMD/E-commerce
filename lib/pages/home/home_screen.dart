@@ -8,12 +8,16 @@ import '../../core/cart_manager.dart';
 import '../../core/supabase_client.dart';
 import '../../core/ui_constants.dart';
 import '../../models/product.dart';
+import '../admin/admin_dashboard.dart';
 import '../cart/cart_screen.dart';
 import '../product/details_screen.dart';
 import '../profile/profile_screen.dart';
 import '../orders/my_orders_screen.dart';
 import '../widgets/categories.dart';
 import '../widgets/item_card.dart';
+import '../wishlist/wishlist_screen.dart';
+import '../promo/promo_screen.dart';
+import '../help/help_screen.dart';
 
 // Palet warna khusus home (senada dengan login coklat)
 const Color _primaryBrown = Color(0xFF8B5E3C);
@@ -34,12 +38,24 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isLoading = true;
   String? _errorMessage;
 
+  // profile info for drawer
+  String? _profileName;
+  String? _avatarUrl;
+  bool _isAdmin = false;
+
   // --- data dari Supabase ---
   final List<AppProduct> _allProducts = [];
   List<AppProduct> _visibleProducts = [];
   final List<String> _categoryLabels = ['All'];
   String? _selectedCategoryName = 'All';
   String _searchQuery = '';
+  final List<String> _quickFilters = const [
+    'All',
+    'Best seller',
+    'New in',
+    '< 1 Juta',
+  ];
+  String _selectedQuickFilter = 'All';
 
   // --- hero slider data ---
   final PageController _heroController = PageController(viewportFraction: 0.9);
@@ -88,7 +104,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _init() async {
     await _cart.initFromServer();
-    await _loadData();
+    await Future.wait([_loadProfileInfo(), _loadData()]);
   }
 
   @override
@@ -156,6 +172,29 @@ class _HomeScreenState extends State<HomeScreen> {
       );
   }
 
+  Future<void> _loadProfileInfo() async {
+    final user = supabase.auth.currentUser;
+    if (user == null) return;
+
+    try {
+      final data = await supabase
+          .from('profiles')
+          .select('full_name, avatar_url, email, role')
+          .eq('id', user.id)
+          .maybeSingle();
+
+      if (!mounted) return;
+      setState(() {
+        _profileName = (data?['full_name'] as String?)?.trim();
+        _avatarUrl = data?['avatar_url'] as String?;
+        _profileName ??= user.email ?? 'Akun Saya';
+        _isAdmin = data?['role'] == 'admin';
+      });
+    } catch (_) {
+      // Biarkan default jika gagal
+    }
+  }
+
   Future<void> _fetchProducts() async {
     final response = await supabase
         .from('products')
@@ -187,7 +226,37 @@ class _HomeScreenState extends State<HomeScreen> {
       base = base.where((p) => p.name.toLowerCase().contains(query));
     }
 
+    switch (_selectedQuickFilter) {
+      case 'Best seller':
+        base = base.where((p) => p.isBestSeller);
+        break;
+      case 'New in':
+        // sort handled below to prioritize produk terbaru
+        break;
+      case '< 1 Juta':
+        base = base.where((p) => p.price < 1000000);
+        break;
+      default:
+        break;
+    }
     _visibleProducts = base.toList();
+
+    if (_selectedQuickFilter == 'New in') {
+      _visibleProducts.sort((a, b) => b.id.compareTo(a.id));
+    }
+  }
+
+  void _onQuickFilterSelected(String value) {
+    setState(() {
+      _selectedQuickFilter = value;
+      _applyFilter();
+    });
+  }
+
+  List<AppProduct> get _trendingProducts {
+    final best = _allProducts.where((p) => p.isBestSeller).toList();
+    if (best.isNotEmpty) return best.take(6).toList();
+    return _allProducts.take(6).toList();
   }
 
   void _onCategorySelected(String label) {
@@ -222,9 +291,16 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _logout() async {
     Navigator.pop(context);
     await supabase.auth.signOut();
+    if (!mounted) return;
+
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(const SnackBar(content: Text('Berhasil logout')));
+
+    // Redirect ke login screen immediately
+    if (mounted) {
+      Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
+    }
   }
 
   void _openSearchSheet() {
@@ -334,17 +410,39 @@ class _HomeScreenState extends State<HomeScreen> {
         onOrders: _openOrders,
         onWishlist: () {
           Navigator.pop(context);
-          _showComingSoon('Wishlist');
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const WishlistScreen()),
+          );
         },
         onVouchers: () {
           Navigator.pop(context);
-          _showComingSoon('Voucher & Promo');
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const PromoScreen()),
+          );
         },
         onHelp: () {
           Navigator.pop(context);
-          _showComingSoon('Bantuan');
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const HelpScreen()),
+          );
         },
+        onAdmin: _isAdmin
+            ? () {
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const AdminDashboardScreen(),
+                  ),
+                );
+              }
+            : null,
         onLogout: _logout,
+        profileName: _profileName,
+        avatarUrl: _avatarUrl,
       ),
       // background dengan gradasi tipis biar nggak polos
       body: Container(
@@ -393,40 +491,66 @@ class _HomeScreenState extends State<HomeScreen> {
                                           crossAxisAlignment:
                                               CrossAxisAlignment.start,
                                           children: [
-                                            const _WelcomeHeader()
-                                                .animate()
-                                                .fadeIn(duration: 400.ms)
-                                                .moveY(
-                                                  begin: 10,
-                                                  duration: 400.ms,
-                                                ),
-                                            const SizedBox(height: 18),
+                                            _HeaderHero(
+                                              profileName: _profileName,
+                                            ),
+                                            const SizedBox(height: 16),
                                             _HeroCarousel(
-                                                  banners: _heroBanners,
-                                                  controller: _heroController,
-                                                  currentIndex: _currentHero,
-                                                  onChanged: (index) {
-                                                    setState(() {
-                                                      _currentHero = index;
-                                                    });
-                                                  },
-                                                )
-                                                .animate()
-                                                .fadeIn(
-                                                  duration: 400.ms,
-                                                  delay: 80.ms,
-                                                )
-                                                .moveY(begin: 12),
-                                            const SizedBox(height: 24),
+                                              banners: _heroBanners,
+                                              controller: _heroController,
+                                              currentIndex: _currentHero,
+                                              onChanged: (index) {
+                                                setState(() {
+                                                  _currentHero = index;
+                                                });
+                                              },
+                                            ),
+                                            const SizedBox(height: 18),
+                                            _PromoStrip(
+                                              onTap: () {
+                                                Navigator.push(
+                                                  context,
+                                                  MaterialPageRoute(
+                                                    builder: (_) =>
+                                                        const PromoScreen(),
+                                                  ),
+                                                );
+                                              },
+                                            ),
+                                            const SizedBox(height: 18),
+                                            _QuickFilterBar(
+                                              filters: _quickFilters,
+                                              selected: _selectedQuickFilter,
+                                              onSelected:
+                                                  _onQuickFilterSelected,
+                                            ),
+                                            const SizedBox(height: 14),
                                             Categories(
                                               categories: _categoryLabels,
                                               selectedLabel:
                                                   _selectedCategoryName,
                                               onSelected: _onCategorySelected,
-                                            ).animate().fadeIn(
-                                              duration: 350.ms,
                                             ),
-                                            const SizedBox(height: 18),
+                                            const SizedBox(height: 22),
+                                            const _SectionHeader(
+                                              title: 'Trending minggu ini',
+                                            ),
+                                            const SizedBox(height: 10),
+                                            _TrendingScroller(
+                                              products: _trendingProducts,
+                                              onTap: (product) {
+                                                Navigator.push(
+                                                  context,
+                                                  MaterialPageRoute(
+                                                    builder: (_) =>
+                                                        DetailsScreen(
+                                                          product: product,
+                                                        ),
+                                                  ),
+                                                );
+                                              },
+                                            ),
+                                            const SizedBox(height: 22),
                                             const _SectionHeader(
                                               title: 'Popular Sneakers',
                                             ),
@@ -464,29 +588,18 @@ class _HomeScreenState extends State<HomeScreen> {
                                           final product =
                                               _visibleProducts[index];
                                           return ItemCard(
-                                                product: product,
-                                                press: () {
-                                                  Navigator.push(
-                                                    context,
-                                                    MaterialPageRoute(
-                                                      builder: (_) =>
-                                                          DetailsScreen(
-                                                            product: product,
-                                                          ),
-                                                    ),
-                                                  );
-                                                },
-                                              )
-                                              .animate()
-                                              .fadeIn(
-                                                duration: 350.ms,
-                                                delay: (index * 40).ms,
-                                              )
-                                              .scale(
-                                                begin: const Offset(0.95, 0.95),
-                                                duration: 300.ms,
-                                                curve: Curves.easeOutCubic,
+                                            product: product,
+                                            press: () {
+                                              Navigator.push(
+                                                context,
+                                                MaterialPageRoute(
+                                                  builder: (_) => DetailsScreen(
+                                                    product: product,
+                                                  ),
+                                                ),
                                               );
+                                            },
+                                          );
                                         }, childCount: _visibleProducts.length),
                                       ),
                                     ),
@@ -600,6 +713,9 @@ class _AppDrawer extends StatelessWidget {
     required this.onVouchers,
     required this.onHelp,
     required this.onLogout,
+    this.onAdmin,
+    this.profileName,
+    this.avatarUrl,
   });
 
   final VoidCallback onProfile;
@@ -607,7 +723,10 @@ class _AppDrawer extends StatelessWidget {
   final VoidCallback onWishlist;
   final VoidCallback onVouchers;
   final VoidCallback onHelp;
+  final VoidCallback? onAdmin;
   final VoidCallback onLogout;
+  final String? profileName;
+  final String? avatarUrl;
 
   @override
   Widget build(BuildContext context) {
@@ -619,21 +738,29 @@ class _AppDrawer extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.all(16),
               child: Row(
-                children: const [
+                children: [
                   CircleAvatar(
                     radius: 24,
                     backgroundColor: _primaryBrown,
-                    child: Icon(Icons.person, color: Colors.white),
+                    backgroundImage:
+                        (avatarUrl != null && avatarUrl!.isNotEmpty)
+                        ? NetworkImage(avatarUrl!)
+                        : null,
+                    child: (avatarUrl == null || avatarUrl!.isEmpty)
+                        ? const Icon(Icons.person, color: Colors.white)
+                        : null,
                   ),
-                  SizedBox(width: 12),
+                  const SizedBox(width: 12),
                   Expanded(
                     child: Text(
-                      'Akun Saya',
-                      style: TextStyle(
+                      profileName ?? 'Akun Saya',
+                      style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w700,
                         color: _textDark,
                       ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
                 ],
@@ -665,6 +792,14 @@ class _AppDrawer extends StatelessWidget {
               title: const Text('Bantuan'),
               onTap: onHelp,
             ),
+            if (onAdmin != null) ...[
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.admin_panel_settings),
+                title: const Text('Admin Panel'),
+                onTap: onAdmin,
+              ),
+            ],
             const Spacer(),
             const Divider(height: 1),
             ListTile(
@@ -676,6 +811,377 @@ class _AppDrawer extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+class _HeaderHero extends StatelessWidget {
+  const _HeaderHero({required this.profileName});
+
+  final String? profileName;
+
+  @override
+  Widget build(BuildContext context) {
+    final greeting = (profileName?.isNotEmpty ?? false)
+        ? 'Halo, ${profileName!.split(' ').first}!'
+        : 'Halo, Sneakerhead!';
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF2D1B0E), Color(0xFF8B5E3C)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.15),
+            blurRadius: 20,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  greeting,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.3,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'Kurasi drops baru, promo, dan best seller hari ini.',
+                  style: TextStyle(
+                    color: Colors.white70,
+                    fontSize: 13,
+                    height: 1.4,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFB923C),
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFFFB923C).withOpacity(0.3),
+                  blurRadius: 8,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: const Text(
+              'Fresh drop',
+              style: TextStyle(
+                color: Colors.black87,
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.5,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MiniActionButton extends StatelessWidget {
+  const _MiniActionButton({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.12),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Colors.white.withOpacity(0.18)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: Colors.white, size: 18),
+            const SizedBox(height: 6),
+            Text(
+              label,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PromoStrip extends StatelessWidget {
+  const _PromoStrip({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: const Color(0xFF0F172A),
+          borderRadius: BorderRadius.circular(18),
+          gradient: const LinearGradient(
+            colors: [Color(0xFF0F172A), Color(0xFF1E293B)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.06),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.08),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(Icons.local_offer, color: Colors.white),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: const [
+                  Text(
+                    'Voucher + free ongkir',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 14,
+                    ),
+                  ),
+                  SizedBox(height: 4),
+                  Text(
+                    'Cek kode promo terbaru, klaim sebelum habis.',
+                    style: TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right, color: Colors.white70),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _QuickFilterBar extends StatelessWidget {
+  const _QuickFilterBar({
+    required this.filters,
+    required this.selected,
+    required this.onSelected,
+  });
+
+  final List<String> filters;
+  final String selected;
+  final ValueChanged<String> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: filters
+            .map(
+              (f) => Padding(
+                padding: const EdgeInsets.only(right: 10),
+                child: ChoiceChip(
+                  selected: selected == f,
+                  onSelected: (_) => onSelected(f),
+                  label: Text(f),
+                  showCheckmark: false,
+                  labelStyle: TextStyle(
+                    color: selected == f ? Colors.white : _textDark,
+                    fontWeight: FontWeight.w700,
+                  ),
+                  backgroundColor: Colors.white,
+                  selectedColor: _primaryBrown,
+                  side: BorderSide(
+                    color: selected == f ? _primaryBrown : Colors.grey.shade300,
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 2,
+                  ),
+                ),
+              ),
+            )
+            .toList(),
+      ),
+    );
+  }
+}
+
+class _TrendingScroller extends StatelessWidget {
+  const _TrendingScroller({required this.products, required this.onTap});
+
+  final List<AppProduct> products;
+  final ValueChanged<AppProduct> onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    if (products.isEmpty) return const SizedBox.shrink();
+
+    return SizedBox(
+      height: 150,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        physics: const BouncingScrollPhysics(),
+        itemCount: products.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 12),
+        itemBuilder: (context, index) {
+          final product = products[index];
+          return _TrendingCard(product: product, onTap: () => onTap(product));
+        },
+      ),
+    );
+  }
+}
+
+class _TrendingCard extends StatelessWidget {
+  const _TrendingCard({required this.product, required this.onTap});
+
+  final AppProduct product;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 200,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [Color(0xFFFFFFFF), Color(0xFFF7F0E9)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(18),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.08),
+              blurRadius: 14,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 60,
+              height: 60,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(14),
+                color: const Color(0xFFF3E8E2),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(14),
+                child: product.imageUrl != null && product.imageUrl!.isNotEmpty
+                    ? Image.network(product.imageUrl!, fit: BoxFit.cover)
+                    : const Icon(Icons.photo_camera_outlined, color: _textDark),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    product.name,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      if (product.isBestSeller)
+                        const Icon(
+                          Icons.local_fire_department,
+                          size: 16,
+                          color: Colors.deepOrange,
+                        ),
+                      const SizedBox(width: 4),
+                      Flexible(
+                        child: Text(
+                          _formatRupiah(product.price),
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: _textDark,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _formatRupiah(int value) {
+    final s = value.toString();
+    final buffer = StringBuffer();
+    for (int i = 0; i < s.length; i++) {
+      final reversedIndex = s.length - i - 1;
+      buffer.write(s[reversedIndex]);
+      if ((i + 1) % 3 == 0 && i + 1 != s.length) {
+        buffer.write('.');
+      }
+    }
+    return 'Rp ${buffer.toString().split('').reversed.join()}';
   }
 }
 
@@ -940,12 +1446,20 @@ class _SectionHeader extends StatelessWidget {
       children: [
         Text(
           title,
-          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+          style: const TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w700,
+            decoration: TextDecoration.none,
+          ),
         ),
         const Spacer(),
         Text(
           'See all',
-          style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+          style: TextStyle(
+            fontSize: 12,
+            color: Colors.grey.shade600,
+            decoration: TextDecoration.none,
+          ),
         ),
       ],
     );

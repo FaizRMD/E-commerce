@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -25,7 +23,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   bool _isLoading = true;
   bool _isUploading = false;
   ProfileModel? _profile;
-  File? _pickedImage;
+  XFile? _pickedFile;
 
   @override
   void initState() {
@@ -106,27 +104,27 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     if (pickedFile != null) {
       setState(() {
-        _pickedImage = File(pickedFile.path);
+        _pickedFile = pickedFile;
       });
       await _uploadAvatar();
     }
   }
 
   Future<void> _uploadAvatar() async {
-    if (_pickedImage == null || _profile == null) return;
+    if (_pickedFile == null || _profile == null) return;
 
     setState(() => _isUploading = true);
     try {
       final user = supabase.auth.currentUser!;
-      final fileExt = _pickedImage!.path.split('.').last;
-      final fileName = '${user.id}/avatar.$fileExt';
+      final fileExt = _pickedFile!.name.split('.').last;
+      final fileName = '${user.id}/avatar.${fileExt.toLowerCase()}';
 
       // Upload dengan upsert untuk menghindari duplicate file error
       await supabase.storage
           .from('avatars')
           .uploadBinary(
             fileName,
-            await _pickedImage!.readAsBytes(),
+            await _pickedFile!.readAsBytes(),
             fileOptions: const FileOptions(upsert: true),
           );
 
@@ -141,7 +139,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         setState(() {
           _profile = _profile!.copyWith(avatarUrl: avatarUrl);
           _isUploading = false;
-          _pickedImage = null;
+          _pickedFile = null;
         });
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Avatar berhasil diupdate')),
