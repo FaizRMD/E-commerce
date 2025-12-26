@@ -5,14 +5,49 @@ import '../../core/ui_constants.dart';
 import '../../core/supabase_client.dart';
 import '../../models/product.dart';
 import '../../core/cart_manager.dart' as cart;
-import '../cart/cart_screen.dart';
+import '../checkout/checkout_screen.dart';
 
 /// Halaman detail produk.
 /// Responsive untuk mobile & web (lebar max dibatasi).
-class DetailsScreen extends StatelessWidget {
+class DetailsScreen extends StatefulWidget {
   const DetailsScreen({super.key, required this.product});
 
   final AppProduct product;
+
+  @override
+  State<DetailsScreen> createState() => _DetailsScreenState();
+}
+
+class _DetailsScreenState extends State<DetailsScreen>
+    with SingleTickerProviderStateMixin {
+  int _qty = 1;
+  late final AnimationController _controller;
+  late final Animation<Offset> _cardSlide;
+  late final Animation<double> _cardFade;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 450),
+    );
+    _cardSlide = Tween<Offset>(
+      begin: const Offset(0, 0.08),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic));
+    _cardFade = CurvedAnimation(parent: _controller, curve: Curves.easeOut);
+    // Jalankan animasi setelah frame pertama dirender agar halus.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _controller.forward();
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -52,36 +87,58 @@ class DetailsScreen extends StatelessWidget {
             child: Stack(
               children: [
                 // KARTU PUTIH BAGIAN BAWAH
-                Container(
-                  margin: EdgeInsets.only(top: size.height * 0.36),
-                  padding: EdgeInsets.only(
-                    top: size.height * 0.12,
-                    left: kDefaultPadding,
-                    right: kDefaultPadding,
-                    bottom: 16,
-                  ),
-                  decoration: const BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.vertical(
-                      top: Radius.circular(24),
+                SlideTransition(
+                  position: _cardSlide,
+                  child: FadeTransition(
+                    opacity: _cardFade,
+                    child: Container(
+                      margin: EdgeInsets.only(top: size.height * 0.36),
+                      padding: EdgeInsets.only(
+                        top: size.height * 0.12,
+                        left: kDefaultPadding,
+                        right: kDefaultPadding,
+                        bottom: 16,
+                      ),
+                      decoration: const BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.vertical(
+                          top: Radius.circular(24),
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Color(0x14000000),
+                            blurRadius: 20,
+                            offset: Offset(0, -8),
+                          ),
+                        ],
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _ColorAndSize(product: widget.product),
+                          const SizedBox(height: 12),
+                          _Description(product: widget.product),
+                          const SizedBox(height: 16),
+                          _CounterWithFavBtn(
+                            product: widget.product,
+                            initialQty: _qty,
+                            onQtyChanged: (value) {
+                              setState(() => _qty = value);
+                            },
+                          ),
+                          const SizedBox(height: 20),
+                          _AddToCartAndBuyNow(
+                            product: widget.product,
+                            qty: _qty,
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _ColorAndSize(product: product),
-                      const SizedBox(height: 12),
-                      _Description(product: product),
-                      const SizedBox(height: 16),
-                      _CounterWithFavBtn(product: product),
-                      const SizedBox(height: 20),
-                      _AddToCartAndBuyNow(product: product),
-                    ],
                   ),
                 ),
 
                 // BAGIAN ATAS: TITLE + GAMBAR BESAR
-                _ProductTitleWithImage(product: product),
+                _ProductTitleWithImage(product: widget.product),
               ],
             ),
           ),
@@ -282,9 +339,15 @@ class _Description extends StatelessWidget {
 
 /// Counter jumlah item + tombol favorit yang simpan ke Supabase wishlist.
 class _CounterWithFavBtn extends StatefulWidget {
-  const _CounterWithFavBtn({required this.product});
+  const _CounterWithFavBtn({
+    required this.product,
+    required this.initialQty,
+    required this.onQtyChanged,
+  });
 
   final AppProduct product;
+  final int initialQty;
+  final ValueChanged<int> onQtyChanged;
 
   @override
   State<_CounterWithFavBtn> createState() => _CounterWithFavBtnState();
@@ -298,6 +361,7 @@ class _CounterWithFavBtnState extends State<_CounterWithFavBtn> {
   @override
   void initState() {
     super.initState();
+    _numOfItems = widget.initialQty;
     _checkIfInWishlist();
   }
 
@@ -392,6 +456,7 @@ class _CounterWithFavBtnState extends State<_CounterWithFavBtn> {
                 onPressed: () {
                   if (_numOfItems > 1) {
                     setState(() => _numOfItems--);
+                    widget.onQtyChanged(_numOfItems);
                   }
                 },
                 color: kTextColor,
@@ -404,6 +469,7 @@ class _CounterWithFavBtnState extends State<_CounterWithFavBtn> {
                 icon: const Icon(Icons.add),
                 onPressed: () {
                   setState(() => _numOfItems++);
+                  widget.onQtyChanged(_numOfItems);
                 },
                 color: kTextColor,
               ),
@@ -443,14 +509,16 @@ class _CounterWithFavBtnState extends State<_CounterWithFavBtn> {
 /// Baris bawah: icon cart, tombol Add to cart, tombol Buy now.
 /// Menggunakan CartManager (keranjang tersimpan di Supabase).
 class _AddToCartAndBuyNow extends StatelessWidget {
-  const _AddToCartAndBuyNow({required this.product});
+  const _AddToCartAndBuyNow({required this.product, required this.qty});
 
   final AppProduct product;
+  final int qty;
 
   Future<void> _handleAddToCart(BuildContext context) async {
     final cm = cart.CartManager.instance;
     try {
-      await cm.addProduct(product, qty: 1);
+      await cm.addProduct(product, qty: qty);
+      if (!context.mounted) return;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Ditambahkan ke keranjang')));
@@ -462,18 +530,40 @@ class _AddToCartAndBuyNow extends StatelessWidget {
   }
 
   Future<void> _handleBuyNow(BuildContext context) async {
-    final cm = cart.CartManager.instance;
     try {
-      await cm.addProduct(product, qty: 1);
+      final result = await showModalBottomSheet<_QuickBuyResult>(
+        context: context,
+        isScrollControlled: true,
+        useSafeArea: true,
+        backgroundColor: Colors.transparent,
+        builder: (context) {
+          return _QuickBuySheet(product: product, qty: qty);
+        },
+      );
+
+      if (result == null) return;
+      if (!context.mounted) return;
+      // Lanjutkan ke halaman Checkout dengan nilai prefilled
+      // agar user bisa review sebelum membuat pesanan.
+      // (Semua logic DB tetap terpusat di CheckoutScreen.)
       await Navigator.push(
         context,
-        MaterialPageRoute(builder: (_) => const CartScreen()),
+        MaterialPageRoute(
+          builder: (_) => CheckoutScreen(
+            product: product,
+            initialQty: qty,
+            initialName: result.name,
+            initialPhone: result.phone,
+            initialAddress: result.address,
+          ),
+        ),
       );
-      await cm.initFromServer(); // refresh badge setelah kembali
     } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Gagal memproses: $e')));
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Gagal memproses: $e')));
+      }
     }
   }
 
@@ -542,4 +632,204 @@ String _formatRupiah(int value) {
     }
   }
   return 'Rp ${buffer.toString().split('').reversed.join()}';
+}
+
+// ========================= QUICK BUY SHEET =========================
+
+class _QuickBuyResult {
+  final String name;
+  final String phone;
+  final String address;
+  const _QuickBuyResult({
+    required this.name,
+    required this.phone,
+    required this.address,
+  });
+}
+
+class _QuickBuySheet extends StatefulWidget {
+  const _QuickBuySheet({required this.product, required this.qty});
+
+  final AppProduct product;
+  final int qty;
+
+  @override
+  State<_QuickBuySheet> createState() => _QuickBuySheetState();
+}
+
+class _QuickBuySheetState extends State<_QuickBuySheet> {
+  final _nameCtrl = TextEditingController();
+  final _phoneCtrl = TextEditingController();
+  final _addrCtrl = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    final user = supabase.auth.currentUser;
+    if (user != null) {
+      _nameCtrl.text =
+          (user.userMetadata?['full_name'] as String?) ?? user.email ?? '';
+    }
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _phoneCtrl.dispose();
+    _addrCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final viewInsets = MediaQuery.of(context).viewInsets;
+    return AnimatedPadding(
+      duration: const Duration(milliseconds: 250),
+      curve: Curves.easeOut,
+      padding: EdgeInsets.only(bottom: viewInsets.bottom),
+      child: Align(
+        alignment: Alignment.bottomCenter,
+        child: Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          child: SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 40,
+                      height: 4,
+                      margin: const EdgeInsets.only(bottom: 12),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade300,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  Row(
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: SizedBox(
+                          width: 56,
+                          height: 56,
+                          child:
+                              widget.product.imageUrl != null &&
+                                  widget.product.imageUrl!.isNotEmpty
+                              ? Image.network(
+                                  widget.product.imageUrl!,
+                                  fit: BoxFit.cover,
+                                )
+                              : Container(
+                                  color: Colors.grey.shade200,
+                                  child: const Icon(Icons.image_outlined),
+                                ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              widget.product.name,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              '${_formatRupiah(widget.product.price)}  •  Qty ${widget.qty}',
+                              style: const TextStyle(color: kTextLightColor),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Alamat Pengiriman (Cepat)',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _nameCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Nama penerima',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _phoneCtrl,
+                    keyboardType: TextInputType.phone,
+                    decoration: const InputDecoration(
+                      labelText: 'No. HP',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _addrCtrl,
+                    maxLines: 2,
+                    decoration: const InputDecoration(
+                      labelText: 'Alamat lengkap',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: kTextColor,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      onPressed: () {
+                        if (_nameCtrl.text.trim().isEmpty ||
+                            _phoneCtrl.text.trim().isEmpty ||
+                            _addrCtrl.text.trim().isEmpty) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Lengkapi nama, no HP, dan alamat'),
+                            ),
+                          );
+                          return;
+                        }
+                        Navigator.pop(
+                          context,
+                          _QuickBuyResult(
+                            name: _nameCtrl.text.trim(),
+                            phone: _phoneCtrl.text.trim(),
+                            address: _addrCtrl.text.trim(),
+                          ),
+                        );
+                      },
+                      child: const Text('Lanjutkan ke Checkout'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }

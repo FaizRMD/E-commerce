@@ -3,14 +3,27 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../core/ui_constants.dart';
 import '../../core/cart_state.dart';
+import '../../core/supabase_client.dart';
 import '../../models/product.dart';
+import '../../models/promotion.dart';
+import '../promo/promo_list_screen.dart';
 import 'order_success_screen.dart';
 
 class CheckoutScreen extends StatefulWidget {
-  const CheckoutScreen({super.key, required this.product, this.initialQty = 1});
+  const CheckoutScreen({
+    super.key,
+    required this.product,
+    this.initialQty = 1,
+    this.initialName,
+    this.initialPhone,
+    this.initialAddress,
+  });
 
   final AppProduct product;
   final int initialQty;
+  final String? initialName;
+  final String? initialPhone;
+  final String? initialAddress;
 
   @override
   State<CheckoutScreen> createState() => _CheckoutScreenState();
@@ -20,10 +33,13 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   final _nameCtrl = TextEditingController();
   final _phoneCtrl = TextEditingController();
   final _addressCtrl = TextEditingController();
+  final _promoCtrl = TextEditingController();
 
   String _paymentMethod = 'cash'; // cash / transfer / ewallet
   bool _isSubmitting = false;
   late int _qty;
+  AppPromotion? _selectedPromo;
+  int _promoDiscount = 0;
 
   @override
   void initState() {
@@ -35,6 +51,16 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       _nameCtrl.text =
           (user.userMetadata?['full_name'] as String?) ?? user.email ?? '';
     }
+    // Prefill dari Quick Buy (jika ada)
+    if ((widget.initialName ?? '').isNotEmpty) {
+      _nameCtrl.text = widget.initialName!;
+    }
+    if ((widget.initialPhone ?? '').isNotEmpty) {
+      _phoneCtrl.text = widget.initialPhone!;
+    }
+    if ((widget.initialAddress ?? '').isNotEmpty) {
+      _addressCtrl.text = widget.initialAddress!;
+    }
   }
 
   @override
@@ -42,12 +68,13 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     _nameCtrl.dispose();
     _phoneCtrl.dispose();
     _addressCtrl.dispose();
+    _promoCtrl.dispose();
     super.dispose();
   }
 
   int get _subtotal => widget.product.price * _qty;
   int get _shipping => 0; // bisa diganti 10000 kalau mau ongkir
-  int get _total => _subtotal + _shipping;
+  int get _total => _subtotal + _shipping - _promoDiscount;
 
   Future<void> _submitOrder() async {
     final supabase = Supabase.instance.client;
@@ -75,23 +102,43 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       final String userName =
           (user.userMetadata?['full_name'] as String?) ?? user.email ?? 'User';
 
-      // 1) insert ke orders
-      final insertedOrder = await supabase
-          .from('orders')
-          .insert({
-            'user_id': user.id,
-            'user_name': userName,
-            'customer_name': _nameCtrl.text.trim(),
-            'total': _subtotal,
-            'total_amount': _total,
-            'status': 'pending',
-            'payment_method': _paymentMethod,
-            // untuk sekarang alamat+hp disimpan di note
-            'note':
-                'Telp: ${_phoneCtrl.text.trim()}\nAlamat: ${_addressCtrl.text.trim()}',
-          })
-          .select('id')
-          .single();
+      // 1) Insert ke orders. Coba dengan kolom shipping_*
+      Map<String, dynamic> orderPayload = {
+        'user_id': user.id,
+        'user_name': userName,
+        'customer_name': _nameCtrl.text.trim(),
+        'total': _subtotal,
+        'total_amount': _total,
+        'status': 'pending',
+        'payment_method': _paymentMethod,
+        // tetap isi note sebagai fallback/riwayat singkat
+        'note':
+            'Telp: ${_phoneCtrl.text.trim()}\nAlamat: ${_addressCtrl.text.trim()}',
+        // kolom baru (akan diabaikan jika belum dibuat; fallback di-catch)
+        'shipping_name': _nameCtrl.text.trim(),
+        'shipping_phone': _phoneCtrl.text.trim(),
+        'shipping_address': _addressCtrl.text.trim(),
+      };
+
+      Map<String, dynamic> insertedOrder;
+      try {
+        insertedOrder = await supabase
+            .from('orders')
+            .insert(orderPayload)
+            .select('id')
+            .single();
+      } on PostgrestException catch (_) {
+        // Jika kolom shipping_* belum ada (belum migrasi), kirim payload minimal.
+        final fallbackPayload = Map<String, dynamic>.from(orderPayload)
+          ..remove('shipping_name')
+          ..remove('shipping_phone')
+          ..remove('shipping_address');
+        insertedOrder = await supabase
+            .from('orders')
+            .insert(fallbackPayload)
+            .select('id')
+            .single();
+      }
 
       final String orderId = insertedOrder['id'] as String;
 
@@ -103,6 +150,23 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         'price': widget.product.price,
         'subtotal': _subtotal,
       });
+
+      // 3) Track voucher usage if promo was applied
+      if (_selectedPromo != null) {
+        // Insert voucher redemption record
+        await supabase.from('voucher_redemptions').insert({
+          'voucher_id': _selectedPromo!.id,
+          'user_id': user.id,
+          'order_id': orderId,
+          'discount_amount': _promoDiscount,
+        });
+
+        // Increment used_count for the voucher
+        await supabase
+            .from('vouchers')
+            .update({'used_count': _selectedPromo!.usedCount + 1})
+            .eq('id', _selectedPromo!.id);
+      }
 
       // update icon keranjang
       CartState.add(_qty);
@@ -133,6 +197,73 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       if (mounted) {
         setState(() => _isSubmitting = false);
       }
+    }
+  }
+
+  Future<void> _applyPromoCode() async {
+    final code = _promoCtrl.text.trim().toUpperCase();
+    if (code.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Masukkan kode promo')));
+      return;
+    }
+
+    try {
+      final response = await supabase
+          .from('vouchers')
+          .select()
+          .eq('code', code)
+          .eq('active', true)
+          .maybeSingle();
+
+      if (response == null) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Kode promo tidak valid')));
+        return;
+      }
+
+      final promo = AppPromotion.fromJson(response as Map<String, dynamic>);
+
+      if (!promo.isValid) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Promo sudah kadaluarsa atau mencapai batas penggunaan',
+            ),
+          ),
+        );
+        return;
+      }
+
+      if (_subtotal < promo.minPurchase) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Minimal pembelian Rp ${promo.minPurchase} untuk promo ini',
+            ),
+          ),
+        );
+        return;
+      }
+
+      setState(() {
+        _selectedPromo = promo;
+        _promoDiscount = promo.calculateDiscount(_subtotal);
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Promo diterapkan! Diskon Rp ${_formatRupiah(_promoDiscount)}',
+          ),
+        ),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Gagal memproses promo: $e')));
     }
   }
 
@@ -282,6 +413,120 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                     ),
                     const SizedBox(height: 16),
 
+                    // promo code
+                    const Text(
+                      'Voucher & Promo',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: _promoCtrl,
+                            decoration: const InputDecoration(
+                              labelText: 'Masukkan kode promo',
+                              border: OutlineInputBorder(),
+                              isDense: true,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        ElevatedButton(
+                          onPressed: _applyPromoCode,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.amber.shade700,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 12,
+                            ),
+                          ),
+                          child: const Text('Terapkan'),
+                        ),
+                        const SizedBox(width: 8),
+                        OutlinedButton(
+                          onPressed: () async {
+                            final selected = await Navigator.push<AppPromotion>(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => PromoListScreen(
+                                  onPromoSelected: (promo) {
+                                    _promoCtrl.text = promo.code;
+                                  },
+                                ),
+                              ),
+                            );
+                            if (selected != null && mounted) {
+                              _applyPromoCode();
+                            }
+                          },
+                          child: const Text('Lihat Semua'),
+                        ),
+                      ],
+                    ),
+                    if (_selectedPromo != null) ...[
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.green.shade50,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.green.shade200),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.check_circle,
+                              color: Colors.green.shade600,
+                              size: 20,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    '${_selectedPromo!.title} diterapkan',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                      color: Colors.green.shade700,
+                                    ),
+                                  ),
+                                  Text(
+                                    'Diskon: Rp ${_formatRupiah(_promoDiscount)}',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.green.shade600,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            GestureDetector(
+                              onTap: () {
+                                setState(() {
+                                  _selectedPromo = null;
+                                  _promoDiscount = 0;
+                                  _promoCtrl.clear();
+                                });
+                              },
+                              child: Icon(
+                                Icons.close,
+                                color: Colors.green.shade600,
+                                size: 20,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+
+                    const SizedBox(height: 16),
+
                     // metode pembayaran
                     const Text(
                       'Metode Pembayaran',
@@ -323,6 +568,14 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                             _rowPrice('Subtotal', _subtotal),
                             const SizedBox(height: 4),
                             _rowPrice('Ongkir', _shipping),
+                            if (_promoDiscount > 0) ...[
+                              const SizedBox(height: 4),
+                              _rowPrice(
+                                'Diskon',
+                                -_promoDiscount,
+                                color: Colors.green,
+                              ),
+                            ],
                             const Divider(height: 16),
                             _rowPrice('Total', _total, isBold: true),
                           ],
@@ -373,7 +626,12 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     );
   }
 
-  Widget _rowPrice(String label, int value, {bool isBold = false}) {
+  Widget _rowPrice(
+    String label,
+    int value, {
+    bool isBold = false,
+    Color? color,
+  }) {
     return Row(
       children: [
         Text(label),
@@ -382,6 +640,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           _formatRupiah(value),
           style: TextStyle(
             fontWeight: isBold ? FontWeight.w700 : FontWeight.w500,
+            color: color,
           ),
         ),
       ],

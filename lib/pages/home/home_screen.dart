@@ -2,7 +2,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_animate/flutter_animate.dart';
 
 import '../../core/cart_manager.dart';
 import '../../core/supabase_client.dart';
@@ -23,6 +22,50 @@ import '../help/help_screen.dart';
 const Color _primaryBrown = Color(0xFF8B5E3C);
 const Color _textDark = Color(0xFF1F2933);
 const Color _textLight = Color(0xFF9AA5B1);
+
+class _Responsive {
+  _Responsive(this.width);
+  final double width;
+
+  bool get isMobile => width < 700;
+  bool get isTablet => width >= 700 && width < 1100;
+  bool get isDesktop => width >= 1100;
+
+  double get horizontalPadding => isDesktop
+      ? 32
+      : isTablet
+      ? 24
+      : 16;
+
+  double get cardAspectRatio => isDesktop
+      ? 0.95
+      : isTablet
+      ? 0.8
+      : 0.68;
+
+  int get gridCrossAxisCount => isDesktop
+      ? 4
+      : isTablet
+      ? 3
+      : 2;
+
+  double get heroHeight => isDesktop
+      ? 320
+      : isTablet
+      ? 280
+      : 240;
+
+  double get trendingHeight => isDesktop
+      ? 190
+      : isTablet
+      ? 170
+      : 150;
+
+  static _Responsive of(BuildContext context) {
+    final width = MediaQuery.of(context).size.width;
+    return _Responsive(width);
+  }
+}
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -403,6 +446,7 @@ class _HomeScreenState extends State<HomeScreen> {
   // ---------------------------------------------------------------------------
   @override
   Widget build(BuildContext context) {
+    final bp = _Responsive.of(context);
     return Scaffold(
       key: _scaffoldKey,
       drawer: _AppDrawer(
@@ -461,8 +505,10 @@ class _HomeScreenState extends State<HomeScreen> {
               : LayoutBuilder(
                   builder: (context, constraints) {
                     // Di web / tablet, konten max 900 biar centrang & rapih
-                    final double maxWidth = constraints.maxWidth > 900.0
-                        ? 900.0
+                    final double maxWidth = bp.isDesktop
+                        ? 1200
+                        : bp.isTablet
+                        ? 1000
                         : constraints.maxWidth;
 
                     return Align(
@@ -495,15 +541,18 @@ class _HomeScreenState extends State<HomeScreen> {
                                               profileName: _profileName,
                                             ),
                                             const SizedBox(height: 16),
-                                            _HeroCarousel(
-                                              banners: _heroBanners,
-                                              controller: _heroController,
-                                              currentIndex: _currentHero,
-                                              onChanged: (index) {
-                                                setState(() {
-                                                  _currentHero = index;
-                                                });
-                                              },
+                                            SizedBox(
+                                              height: bp.heroHeight,
+                                              child: _HeroCarousel(
+                                                banners: _heroBanners,
+                                                controller: _heroController,
+                                                currentIndex: _currentHero,
+                                                onChanged: (index) {
+                                                  setState(() {
+                                                    _currentHero = index;
+                                                  });
+                                                },
+                                              ),
                                             ),
                                             const SizedBox(height: 18),
                                             _PromoStrip(
@@ -536,19 +585,16 @@ class _HomeScreenState extends State<HomeScreen> {
                                               title: 'Trending minggu ini',
                                             ),
                                             const SizedBox(height: 10),
-                                            _TrendingScroller(
-                                              products: _trendingProducts,
-                                              onTap: (product) {
-                                                Navigator.push(
-                                                  context,
-                                                  MaterialPageRoute(
-                                                    builder: (_) =>
-                                                        DetailsScreen(
-                                                          product: product,
-                                                        ),
-                                                  ),
-                                                );
-                                              },
+                                            SizedBox(
+                                              height: bp.trendingHeight,
+                                              child: _TrendingScroller(
+                                                products: _trendingProducts,
+                                                onTap: (product) {
+                                                  Navigator.of(context).push(
+                                                    _detailsRoute(product),
+                                                  );
+                                                },
+                                              ),
                                             ),
                                             const SizedBox(height: 22),
                                             const _SectionHeader(
@@ -561,25 +607,21 @@ class _HomeScreenState extends State<HomeScreen> {
                                     ),
                                     // GRID PRODUK
                                     SliverPadding(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: kDefaultPadding,
+                                      padding: EdgeInsets.symmetric(
+                                        horizontal: bp.horizontalPadding,
                                         vertical: 8,
                                       ),
                                       sliver: SliverGrid(
                                         gridDelegate:
                                             SliverGridDelegateWithFixedCrossAxisCount(
                                               crossAxisCount:
-                                                  constraints.maxWidth > 700
-                                                  ? 3
-                                                  : 2,
+                                                  bp.gridCrossAxisCount,
                                               mainAxisSpacing: 18,
                                               crossAxisSpacing: 18,
                                               // 0.68 → cell sedikit lebih tinggi,
                                               // menghindari overflow kuning-hitam
                                               childAspectRatio:
-                                                  constraints.maxWidth > 700
-                                                  ? 0.8
-                                                  : 0.68,
+                                                  bp.cardAspectRatio,
                                             ),
                                         delegate: SliverChildBuilderDelegate((
                                           context,
@@ -590,14 +632,9 @@ class _HomeScreenState extends State<HomeScreen> {
                                           return ItemCard(
                                             product: product,
                                             press: () {
-                                              Navigator.push(
+                                              Navigator.of(
                                                 context,
-                                                MaterialPageRoute(
-                                                  builder: (_) => DetailsScreen(
-                                                    product: product,
-                                                  ),
-                                                ),
-                                              );
+                                              ).push(_detailsRoute(product));
                                             },
                                           );
                                         }, childCount: _visibleProducts.length),
@@ -621,11 +658,36 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // Route transisi modern untuk halaman detail: fade + slide up
+  Route _detailsRoute(AppProduct product) {
+    return PageRouteBuilder(
+      transitionDuration: const Duration(milliseconds: 350),
+      reverseTransitionDuration: const Duration(milliseconds: 280),
+      pageBuilder: (context, animation, secondaryAnimation) =>
+          DetailsScreen(product: product),
+      transitionsBuilder: (context, animation, secondaryAnimation, child) {
+        final slide =
+            Tween<Offset>(
+              begin: const Offset(0, 0.04),
+              end: Offset.zero,
+            ).animate(
+              CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
+            );
+        final fade = CurvedAnimation(parent: animation, curve: Curves.easeOut);
+        return FadeTransition(
+          opacity: fade,
+          child: SlideTransition(position: slide, child: child),
+        );
+      },
+    );
+  }
+
   // AppBar custom dengan badge cart
   Widget _buildAppBar() {
+    final bp = _Responsive.of(context);
     return Padding(
-      padding: const EdgeInsets.symmetric(
-        horizontal: kDefaultPadding,
+      padding: EdgeInsets.symmetric(
+        horizontal: bp.horizontalPadding,
         vertical: 4,
       ),
       child: Row(

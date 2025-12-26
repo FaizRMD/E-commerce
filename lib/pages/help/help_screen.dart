@@ -98,7 +98,7 @@ class _HelpScreenState extends State<HelpScreen> {
                   ],
                 ),
               ),
-            ).animate().fadeIn().slideY(begin: -0.1),
+            ),
 
             const SizedBox(height: 24),
 
@@ -208,8 +208,6 @@ class _FAQExpansionTile extends StatefulWidget {
 }
 
 class _FAQExpansionTileState extends State<_FAQExpansionTile> {
-  bool _isExpanded = false;
-
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -226,7 +224,7 @@ class _FAQExpansionTileState extends State<_FAQExpansionTile> {
         collapsedIconColor: const Color(0xFF8B5E3C),
         iconColor: const Color(0xFF8B5E3C),
         onExpansionChanged: (expanded) {
-          setState(() => _isExpanded = expanded);
+          setState(() {});
         },
         children: [
           Padding(
@@ -242,6 +240,6 @@ class _FAQExpansionTileState extends State<_FAQExpansionTile> {
           ),
         ],
       ),
-    ).animate(delay: widget.delay).fadeIn().slideY(begin: 0.1);
+    );
   }
 }

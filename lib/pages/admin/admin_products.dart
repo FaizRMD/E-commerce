@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:image_picker/image_picker.dart';
+import 'dart:io';
 
 import '../../core/supabase_client.dart';
 import '../../models/product.dart';
@@ -324,12 +326,15 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
   final _nameController = TextEditingController();
   final _priceController = TextEditingController();
   final _descriptionController = TextEditingController();
-  final _imageUrlController = TextEditingController();
+
   bool _isActive = true;
   bool _isBestSeller = false;
   bool _isSubmitting = false;
   int? _selectedCategoryId;
   List<Map<String, dynamic>> _categories = [];
+
+  File? _selectedImage;
+  String? _imageUrl;
 
   @override
   void initState() {
@@ -339,7 +344,7 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
       _nameController.text = widget.product!.name;
       _priceController.text = widget.product!.price.toString();
       _descriptionController.text = widget.product!.description ?? '';
-      _imageUrlController.text = widget.product!.imageUrl ?? '';
+      _imageUrl = widget.product!.imageUrl;
       _isActive = widget.product!.isActive;
       _isBestSeller = widget.product!.isBestSeller;
     }
@@ -350,8 +355,56 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
     _nameController.dispose();
     _priceController.dispose();
     _descriptionController.dispose();
-    _imageUrlController.dispose();
     super.dispose();
+  }
+
+  Future<void> _pickImage() async {
+    try {
+      final picker = ImagePicker();
+      final pickedFile = await picker.pickImage(source: ImageSource.gallery);
+
+      if (pickedFile != null) {
+        setState(() {
+          _selectedImage = File(pickedFile.path);
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error picking image: $e')));
+      }
+    }
+  }
+
+  Future<String?> _uploadImage() async {
+    if (_selectedImage == null) {
+      return _imageUrl; // Return existing URL jika tidak ada image baru
+    }
+
+    try {
+      final fileName =
+          'products/${DateTime.now().millisecondsSinceEpoch}_${_nameController.text.trim()}.jpg';
+
+      // Upload ke Supabase Storage
+      await supabase.storage
+          .from('product-images')
+          .upload(fileName, _selectedImage!);
+
+      // Get public URL
+      final publicUrl = supabase.storage
+          .from('product-images')
+          .getPublicUrl(fileName);
+
+      return publicUrl;
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error uploading image: $e')));
+      }
+      return null;
+    }
   }
 
   Future<void> _loadCategories() async {
@@ -375,11 +428,24 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
     setState(() => _isSubmitting = true);
 
     try {
+      // Upload image dan dapatkan URL
+      final uploadedImageUrl = await _uploadImage();
+
+      if (_selectedImage != null && uploadedImageUrl == null) {
+        if (mounted) {
+          setState(() => _isSubmitting = false);
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('Gagal upload gambar')));
+        }
+        return;
+      }
+
       final data = {
         'name': _nameController.text.trim(),
         'price': int.parse(_priceController.text.trim()),
         'description': _descriptionController.text.trim(),
-        'image_url': _imageUrlController.text.trim(),
+        'image_url': uploadedImageUrl ?? _imageUrl,
         'is_active': _isActive,
         'is_best_seller': _isBestSeller,
         if (_selectedCategoryId != null) 'category_id': _selectedCategoryId,
@@ -402,8 +468,8 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
           SnackBar(
             content: Text(
               widget.product == null
-                  ? 'Product created successfully'
-                  : 'Product updated successfully',
+                  ? 'Produk berhasil dibuat'
+                  : 'Produk berhasil diperbarui',
             ),
           ),
         );
@@ -474,25 +540,133 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
                 controller: _descriptionController,
                 maxLines: 3,
                 decoration: const InputDecoration(
-                  labelText: 'Description',
+                  labelText: 'Deskripsi',
                   border: OutlineInputBorder(),
                 ),
               ),
               const SizedBox(height: 16),
 
-              TextFormField(
-                controller: _imageUrlController,
-                decoration: const InputDecoration(
-                  labelText: 'Image URL',
-                  border: OutlineInputBorder(),
-                ),
+              // Image Picker Section
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Foto Produk',
+                    style: GoogleFonts.poppins(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+
+                  // Image Preview atau Placeholder
+                  Container(
+                    width: double.infinity,
+                    height: 200,
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.grey.shade300, width: 2),
+                      borderRadius: BorderRadius.circular(12),
+                      color: Colors.grey.shade50,
+                    ),
+                    child: _selectedImage != null
+                        ? ClipRRect(
+                            borderRadius: BorderRadius.circular(10),
+                            child: Image.file(
+                              _selectedImage!,
+                              fit: BoxFit.cover,
+                            ),
+                          )
+                        : _imageUrl != null && _imageUrl!.isNotEmpty
+                        ? ClipRRect(
+                            borderRadius: BorderRadius.circular(10),
+                            child: Image.network(
+                              _imageUrl!,
+                              fit: BoxFit.cover,
+                              errorBuilder: (context, error, stackTrace) {
+                                return Center(
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(
+                                        Icons.image_not_supported_outlined,
+                                        size: 48,
+                                        color: Colors.grey.shade400,
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Text(
+                                        'Gambar tidak bisa dimuat',
+                                        style: GoogleFonts.poppins(
+                                          fontSize: 12,
+                                          color: Colors.grey.shade600,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
+                          )
+                        : Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  Icons.image_outlined,
+                                  size: 48,
+                                  color: Colors.grey.shade400,
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  'Belum ada gambar',
+                                  style: GoogleFonts.poppins(
+                                    fontSize: 12,
+                                    color: Colors.grey.shade600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                  ),
+                  const SizedBox(height: 12),
+
+                  // Button untuk pick image
+                  ElevatedButton.icon(
+                    onPressed: _pickImage,
+                    icon: const Icon(Icons.photo_library_outlined),
+                    label: Text(
+                      _selectedImage != null
+                          ? 'Ganti Gambar'
+                          : 'Pilih Gambar dari Galeri',
+                      style: GoogleFonts.poppins(fontWeight: FontWeight.w500),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.blue.shade500,
+                      foregroundColor: Colors.white,
+                      minimumSize: const Size(double.infinity, 48),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                  if (_selectedImage != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      'Gambar baru akan diupload saat disimpan',
+                      style: GoogleFonts.poppins(
+                        fontSize: 11,
+                        color: Colors.orange.shade700,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                  ],
+                ],
               ),
               const SizedBox(height: 16),
 
               DropdownButtonFormField<int>(
                 value: _selectedCategoryId,
                 decoration: const InputDecoration(
-                  labelText: 'Category',
+                  labelText: 'Kategori',
                   border: OutlineInputBorder(),
                 ),
                 items: _categories.map((cat) {
@@ -506,7 +680,7 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
               const SizedBox(height: 16),
 
               SwitchListTile(
-                title: const Text('Active'),
+                title: const Text('Aktif'),
                 value: _isActive,
                 onChanged: (val) => setState(() => _isActive = val),
               ),
@@ -536,7 +710,9 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
                         ),
                       )
                     : Text(
-                        widget.product == null ? 'Create' : 'Update',
+                        widget.product == null
+                            ? 'Buat Produk'
+                            : 'Update Produk',
                         style: GoogleFonts.poppins(
                           fontSize: 16,
                           fontWeight: FontWeight.w600,
