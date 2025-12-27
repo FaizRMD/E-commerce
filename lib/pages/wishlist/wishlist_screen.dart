@@ -3,6 +3,9 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 
 import '../../core/supabase_client.dart';
+import '../../core/storage_utils.dart';
+import '../../widgets/cached_resolved_image.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import '../../models/product.dart';
 
 class WishlistScreen extends StatefulWidget {
@@ -186,9 +189,17 @@ class _WishlistScreenState extends State<WishlistScreen> {
                             height: 100,
                             color: Colors.grey.shade200,
                             child: product.imageUrl != null
-                                ? Image.network(
-                                    product.imageUrl!,
+                                ? CachedResolvedImage(
+                                    product.imageUrl,
+                                    width: 100,
+                                    height: 100,
                                     fit: BoxFit.cover,
+                                    placeholder: Container(
+                                      color: Colors.grey.shade200,
+                                    ),
+                                    errorWidget: const Icon(
+                                      Icons.image_not_supported,
+                                    ),
                                   )
                                 : const Icon(Icons.image_not_supported),
                           ),

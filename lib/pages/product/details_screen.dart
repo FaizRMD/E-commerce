@@ -1,9 +1,12 @@
 // lib/pages/product/details_screen.dart
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 
 import '../../core/ui_constants.dart';
 import '../../core/supabase_client.dart';
 import '../../models/product.dart';
+import '../../core/storage_utils.dart';
+import '../../widgets/cached_resolved_image.dart';
 import '../../core/cart_manager.dart' as cart;
 import '../checkout/checkout_screen.dart';
 
@@ -86,7 +89,7 @@ class _DetailsScreenState extends State<DetailsScreen>
             height: size.height,
             child: Stack(
               children: [
-                // KARTU PUTIH BAGIAN BAWAH
+                // Bottom white card
                 SlideTransition(
                   position: _cardSlide,
                   child: FadeTransition(
@@ -137,7 +140,7 @@ class _DetailsScreenState extends State<DetailsScreen>
                   ),
                 ),
 
-                // BAGIAN ATAS: TITLE + GAMBAR BESAR
+                // Top title + image
                 _ProductTitleWithImage(product: widget.product),
               ],
             ),
@@ -216,10 +219,11 @@ class _ProductTitleWithImage extends StatelessWidget {
                   ),
                   child:
                       product.imageUrl != null && product.imageUrl!.isNotEmpty
-                      ? Image.network(
-                          product.imageUrl!,
+                      ? CachedResolvedImage(
+                          product.imageUrl,
                           fit: BoxFit.cover,
-                          errorBuilder: (context, error, stack) => const Center(
+                          placeholder: const Center(child: CircularProgressIndicator()),
+                          errorWidget: const Center(
                             child: Icon(
                               Icons.broken_image_outlined,
                               size: 60,
@@ -723,9 +727,15 @@ class _QuickBuySheetState extends State<_QuickBuySheet> {
                           child:
                               widget.product.imageUrl != null &&
                                   widget.product.imageUrl!.isNotEmpty
-                              ? Image.network(
-                                  widget.product.imageUrl!,
+                              ? CachedResolvedImage(
+                                  widget.product.imageUrl,
                                   fit: BoxFit.cover,
+                                  placeholder:
+                                      Container(color: Colors.grey.shade200),
+                                  errorWidget: Container(
+                                    color: Colors.grey.shade200,
+                                    child: const Icon(Icons.image_outlined),
+                                  ),
                                 )
                               : Container(
                                   color: Colors.grey.shade200,

@@ -1,8 +1,11 @@
 // lib/pages/cart/cart_screen.dart
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 
 import '../../core/cart_manager.dart';
 import '../../core/ui_constants.dart';
+import '../../core/storage_utils.dart';
+import '../../widgets/cached_resolved_image.dart';
 
 class CartScreen extends StatefulWidget {
   const CartScreen({super.key});
@@ -66,9 +69,7 @@ class _CartScreenState extends State<CartScreen> {
                 physics: const AlwaysScrollableScrollPhysics(),
                 children: const [
                   SizedBox(height: 100),
-                  Center(
-                    child: Text('Keranjangmu masih kosong'),
-                  ),
+                  Center(child: Text('Keranjangmu masih kosong')),
                 ],
               ),
             );
@@ -117,13 +118,16 @@ class _CartScreenState extends State<CartScreen> {
                           width: 70,
                           height: 70,
                           color: const Color(0xFFE5E7EB),
-                          child: item.productImageUrl != null &&
+                          child:
+                              item.productImageUrl != null &&
                                   item.productImageUrl!.isNotEmpty
-                              ? Image.network(
-                                  item.productImageUrl!,
+                              ? CachedResolvedImage(
+                                  item.productImageUrl,
                                   fit: BoxFit.cover,
-                                  errorBuilder: (context, error, stack) =>
-                                      const Icon(
+                                  width: 70,
+                                  height: 70,
+                                  placeholder: const SizedBox(),
+                                  errorWidget: const Icon(
                                     Icons.broken_image_outlined,
                                     color: Colors.grey,
                                   ),
@@ -269,9 +273,7 @@ class _CartScreenState extends State<CartScreen> {
                                     } else {
                                       _selectedIds
                                         ..clear()
-                                        ..addAll(
-                                          _cart.items.map((e) => e.id),
-                                        );
+                                        ..addAll(_cart.items.map((e) => e.id));
                                     }
                                   });
                                 },
@@ -305,8 +307,9 @@ class _CartScreenState extends State<CartScreen> {
 
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       const SnackBar(
-                                        content:
-                                            Text('Checkout berhasil dibuat'),
+                                        content: Text(
+                                          'Checkout berhasil dibuat',
+                                        ),
                                       ),
                                     );
                                   } catch (e) {
@@ -314,8 +317,7 @@ class _CartScreenState extends State<CartScreen> {
 
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       SnackBar(
-                                        content:
-                                            Text('Gagal checkout: $e'),
+                                        content: Text('Gagal checkout: $e'),
                                       ),
                                     );
                                   } finally {

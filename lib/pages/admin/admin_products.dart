@@ -2,9 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:image_picker/image_picker.dart';
-import 'dart:io';
+import 'dart:typed_data';
+import 'dart:convert';
+import 'package:flutter/services.dart' show rootBundle;
+// debugPrint not required here; use print or ScaffoldMessenger for user-visible logs
 
 import '../../core/supabase_client.dart';
+import '../../core/storage_utils.dart';
+import '../../widgets/cached_resolved_image.dart';
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../models/product.dart';
 
 class AdminProductsScreen extends StatefulWidget {
@@ -67,11 +74,61 @@ class _AdminProductsScreenState extends State<AdminProductsScreen> {
 
   Future<void> _deleteProduct(int productId) async {
     try {
-      await supabase.from('products').delete().eq('id', productId);
+      // Fetch product to get image URL (if any)
+      final productData = await supabase
+          .from('products')
+          .select('id, image_url')
+          .eq('id', productId)
+          .maybeSingle();
+      String? imageUrl;
+      if (productData != null) {
+        final pd = Map<String, dynamic>.from(productData as Map);
+        imageUrl = pd['image_url'] as String?;
+      }
+
+      // If there's an image, try to delete the storage object first
+      if (imageUrl != null && imageUrl.isNotEmpty) {
+        try {
+          // Determine file path inside bucket.
+          String? filePath;
+          final marker = 'product-images/';
+          if (imageUrl.contains(marker)) {
+            final idx = imageUrl.indexOf(marker);
+            filePath = imageUrl.substring(idx + marker.length);
+          } else if (imageUrl.startsWith('http')) {
+            // Could be a full public URL lacking an obvious marker; can't reliably delete.
+            filePath = null;
+          } else {
+            // Treat stored value as internal path already
+            filePath = imageUrl;
+          }
+
+          if (filePath != null && filePath.isNotEmpty) {
+            await supabase.storage.from('product-images').remove([filePath]);
+          }
+        } catch (e) {
+          // Log but continue to delete DB record
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Warning: failed to delete image file: $e'),
+              ),
+            );
+          }
+        }
+      }
+
+      // Delete DB record
+      final resp = await supabase.from('products').delete().eq('id', productId);
+      // If deletion succeeded, remove locally so UI updates immediately
       if (mounted) {
+        setState(() {
+          _products.removeWhere((p) => p.id == productId);
+        });
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Product deleted successfully')),
         );
+        // Refresh from server in background to ensure state consistency
         _loadProducts();
       }
     } catch (e) {
@@ -238,25 +295,7 @@ class _ProductCard extends StatelessWidget {
         contentPadding: const EdgeInsets.all(12),
         leading: ClipRRect(
           borderRadius: BorderRadius.circular(8),
-          child: product.imageUrl != null
-              ? Image.network(
-                  product.imageUrl!,
-                  width: 60,
-                  height: 60,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => Container(
-                    width: 60,
-                    height: 60,
-                    color: Colors.grey[300],
-                    child: const Icon(Icons.image_not_supported),
-                  ),
-                )
-              : Container(
-                  width: 60,
-                  height: 60,
-                  color: Colors.grey[300],
-                  child: const Icon(Icons.image),
-                ),
+          child: _ProductImage(imageUrl: product.imageUrl),
         ),
         title: Text(
           product.name,
@@ -333,7 +372,7 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
   int? _selectedCategoryId;
   List<Map<String, dynamic>> _categories = [];
 
-  File? _selectedImage;
+  Uint8List? _selectedImageBytes;
   String? _imageUrl;
 
   @override
@@ -364,8 +403,9 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
       final pickedFile = await picker.pickImage(source: ImageSource.gallery);
 
       if (pickedFile != null) {
+        final bytes = await pickedFile.readAsBytes();
         setState(() {
-          _selectedImage = File(pickedFile.path);
+          _selectedImageBytes = bytes;
         });
       }
     } catch (e) {
@@ -377,34 +417,138 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
     }
   }
 
-  Future<String?> _uploadImage() async {
-    if (_selectedImage == null) {
-      return _imageUrl; // Return existing URL jika tidak ada image baru
-    }
-
+  Future<void> _pickFromAssets() async {
     try {
-      final fileName =
-          'products/${DateTime.now().millisecondsSinceEpoch}_${_nameController.text.trim()}.jpg';
+      final manifestContent = await rootBundle.loadString('AssetManifest.json');
+      final Map<String, dynamic> manifestMap = json.decode(manifestContent);
+      final assetKeys =
+          manifestMap.keys.where((k) => k.startsWith('assets/images/')).toList()
+            ..sort();
 
-      // Upload ke Supabase Storage
-      await supabase.storage
-          .from('product-images')
-          .upload(fileName, _selectedImage!);
+      if (assetKeys.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Tidak ada asset di assets/images')),
+          );
+        }
+        return;
+      }
 
-      // Get public URL
-      final publicUrl = supabase.storage
-          .from('product-images')
-          .getPublicUrl(fileName);
+      final chosen = await showDialog<String?>(
+        context: context,
+        builder: (context) => SimpleDialog(
+          title: const Text('Pilih gambar dari assets'),
+          children: assetKeys.map((p) {
+            final name = p.split('/').last;
+            return SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, p),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 48,
+                    height: 48,
+                    child: Image.asset(p, fit: BoxFit.cover),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(child: Text(name)),
+                ],
+              ),
+            );
+          }).toList(),
+        ),
+      );
 
-      return publicUrl;
+      if (chosen != null) {
+        final bytes = (await rootBundle.load(chosen)).buffer.asUint8List();
+        setState(() => _selectedImageBytes = bytes);
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('Error uploading image: $e')));
+        ).showSnackBar(SnackBar(content: Text('Error membaca asset: $e')));
       }
+    }
+  }
+
+  Future<String?> _uploadImage() async {
+    if (_selectedImageBytes == null) return _imageUrl;
+
+    // Pastikan user terautentikasi sebelum mencoba upload
+    final user = supabase.auth.currentUser;
+    if (user == null) {
+      final proceed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Belum login'),
+          content: const Text(
+            'Anda harus login untuk mengupload gambar. Lanjut tanpa gambar?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Batal'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Lanjut tanpa gambar'),
+            ),
+          ],
+        ),
+      );
+
+      if (proceed != true) return null;
       return null;
     }
+
+    final fileName =
+        'products/${DateTime.now().millisecondsSinceEpoch}_${_nameController.text.trim()}.jpg';
+
+    int attempts = 0;
+    while (attempts < 3) {
+      try {
+        await supabase.storage
+            .from('product-images')
+            .uploadBinary(
+              fileName,
+              _selectedImageBytes!,
+              fileOptions: const FileOptions(upsert: true),
+            );
+
+        // Return storage path (inside bucket). Store this in DB, not a full public URL.
+        print('uploaded file to: $fileName');
+        return fileName;
+      } catch (e) {
+        attempts++;
+        if (!mounted) return null;
+
+        final retry = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Error uploading image'),
+            content: Text('Error: $e'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Lanjut tanpa gambar'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Retry'),
+              ),
+            ],
+          ),
+        );
+
+        if (retry != true) {
+          // User chose to continue without image
+          return null;
+        }
+        // else loop to retry
+      }
+    }
+
+    return null;
   }
 
   Future<void> _loadCategories() async {
@@ -430,15 +574,21 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
     try {
       // Upload image dan dapatkan URL
       final uploadedImageUrl = await _uploadImage();
+      print(
+        'uploadedImageUrl (storage path): $uploadedImageUrl, existing imageUrl: $_imageUrl',
+      );
 
-      if (_selectedImage != null && uploadedImageUrl == null) {
+      if (_selectedImageBytes != null && uploadedImageUrl == null) {
         if (mounted) {
-          setState(() => _isSubmitting = false);
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(const SnackBar(content: Text('Gagal upload gambar')));
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Gagal upload gambar — produk akan dibuat tanpa gambar',
+              ),
+            ),
+          );
         }
-        return;
+        // Note: do not return here; continue to create product without the new image.
       }
 
       final data = {
@@ -453,13 +603,15 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
 
       if (widget.product == null) {
         // Create new product
-        await supabase.from('products').insert(data);
+        final res = await supabase.from('products').insert(data);
+        print('insert response: $res');
       } else {
         // Update existing product
-        await supabase
+        final res = await supabase
             .from('products')
             .update(data)
             .eq('id', widget.product!.id);
+        print('update response: $res');
       }
 
       if (mounted) {
@@ -568,42 +720,51 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
                       borderRadius: BorderRadius.circular(12),
                       color: Colors.grey.shade50,
                     ),
-                    child: _selectedImage != null
+                    child: _selectedImageBytes != null
                         ? ClipRRect(
                             borderRadius: BorderRadius.circular(10),
-                            child: Image.file(
-                              _selectedImage!,
+                            child: Image.memory(
+                              _selectedImageBytes!,
                               fit: BoxFit.cover,
                             ),
                           )
                         : _imageUrl != null && _imageUrl!.isNotEmpty
                         ? ClipRRect(
                             borderRadius: BorderRadius.circular(10),
-                            child: Image.network(
-                              _imageUrl!,
+                            child: CachedNetworkImage(
+                              imageUrl: _imageUrl!,
+                              cacheKey:
+                                  _imageUrl?.split('?').first ?? _imageUrl,
                               fit: BoxFit.cover,
-                              errorBuilder: (context, error, stackTrace) {
-                                return Center(
-                                  child: Column(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      Icon(
-                                        Icons.image_not_supported_outlined,
-                                        size: 48,
-                                        color: Colors.grey.shade400,
-                                      ),
-                                      const SizedBox(height: 8),
-                                      Text(
-                                        'Gambar tidak bisa dimuat',
-                                        style: GoogleFonts.poppins(
-                                          fontSize: 12,
-                                          color: Colors.grey.shade600,
-                                        ),
-                                      ),
-                                    ],
+                              placeholder: (context, _) => const Center(
+                                child: SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
                                   ),
-                                );
-                              },
+                                ),
+                              ),
+                              errorWidget: (context, _, __) => Center(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      Icons.image_not_supported_outlined,
+                                      size: 48,
+                                      color: Colors.grey.shade400,
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      'Gambar tidak bisa dimuat',
+                                      style: GoogleFonts.poppins(
+                                        fontSize: 12,
+                                        color: Colors.grey.shade600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
                             ),
                           )
                         : Center(
@@ -634,7 +795,7 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
                     onPressed: _pickImage,
                     icon: const Icon(Icons.photo_library_outlined),
                     label: Text(
-                      _selectedImage != null
+                      _selectedImageBytes != null
                           ? 'Ganti Gambar'
                           : 'Pilih Gambar dari Galeri',
                       style: GoogleFonts.poppins(fontWeight: FontWeight.w500),
@@ -648,7 +809,24 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
                       ),
                     ),
                   ),
-                  if (_selectedImage != null) ...[
+                  const SizedBox(height: 8),
+                  ElevatedButton.icon(
+                    onPressed: _pickFromAssets,
+                    icon: const Icon(Icons.folder_open),
+                    label: Text(
+                      'Pilih dari folder assets',
+                      style: GoogleFonts.poppins(fontWeight: FontWeight.w500),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green.shade600,
+                      foregroundColor: Colors.white,
+                      minimumSize: const Size(double.infinity, 44),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                  if (_selectedImageBytes != null) ...[
                     const SizedBox(height: 8),
                     Text(
                       'Gambar baru akan diupload saat disimpan',
@@ -722,6 +900,50 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _ProductImage extends StatelessWidget {
+  final String? imageUrl;
+  const _ProductImage({this.imageUrl});
+  // Uses centralized resolver with caching to avoid frequent signed-URL requests.
+  // The actual resolution is done by `resolveStorageUrl` in `lib/core/storage_utils.dart`.
+
+  @override
+  Widget build(BuildContext context) {
+    if (imageUrl == null || imageUrl!.isEmpty) {
+      return Container(
+        width: 60,
+        height: 60,
+        color: Colors.grey[300],
+        child: const Icon(Icons.image),
+      );
+    }
+
+    return CachedResolvedImage(
+      imageUrl,
+      width: 60,
+      height: 60,
+      fit: BoxFit.cover,
+      placeholder: Container(
+        width: 60,
+        height: 60,
+        color: Colors.grey[200],
+        child: const Center(
+          child: SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      ),
+      errorWidget: Container(
+        width: 60,
+        height: 60,
+        color: Colors.grey[300],
+        child: const Icon(Icons.image_not_supported),
       ),
     );
   }

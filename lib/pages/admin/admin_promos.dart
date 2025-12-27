@@ -1,8 +1,38 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'dart:async';
 
 import '../../core/supabase_client.dart';
 import '../../models/promotion.dart';
+
+/// Keep only the keys the server is expected to have to avoid
+/// triggering missing-column exceptions which slow down requests.
+Map<String, dynamic> _filterPayloadToKnownColumns(
+  Map<String, dynamic> payload,
+) {
+  const allowed = {
+    'code',
+    'title',
+    'description',
+    'discount_type',
+    'discount_value',
+    'discount_percent',
+    'min_purchase',
+    'max_usage',
+    'used_count',
+    'valid_from',
+    'valid_until',
+    'active',
+    'created_at',
+    'updated_at',
+  };
+
+  final out = <String, dynamic>{};
+  for (final e in payload.entries) {
+    if (allowed.contains(e.key)) out[e.key] = e.value;
+  }
+  return out;
+}
 
 String _formatDate(DateTime date) {
   final months = [
@@ -87,13 +117,17 @@ class _AdminPromoScreenState extends State<AdminPromoScreen> {
       try {
         await supabase.from('vouchers').delete().eq('id', id);
         await _loadPromos();
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Promo berhasil dihapus')));
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Promo berhasil dihapus')),
+          );
+        }
       } catch (e) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Error: $e')));
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Error: $e')));
+        }
       }
     }
   }
@@ -105,17 +139,37 @@ class _AdminPromoScreenState extends State<AdminPromoScreen> {
           .update({'active': !promo.active})
           .eq('id', promo.id);
       await _loadPromos();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Promo ${!promo.active ? 'diaktifkan' : 'dinonaktifkan'}',
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Promo ${!promo.active ? 'diaktifkan' : 'dinonaktifkan'}',
+            ),
           ),
-        ),
-      );
+        );
+      }
     } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Error: $e')));
+      final msg = e.toString();
+      if (msg.contains("Could not find the 'active' column") ||
+          msg.contains('column "active"')) {
+        // Server table doesn't have `active` column — inform user and reload
+        await _loadPromos();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Server schema does not include `active`; toggle skipped',
+              ),
+            ),
+          );
+        }
+        return;
+      }
+
+      if (mounted)
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: $e')));
     }
   }
 
@@ -309,50 +363,51 @@ class __EditPromoScreenState extends State<_EditPromoScreen> {
     if (_codeCtrl.text.isEmpty ||
         _titleCtrl.text.isEmpty ||
         _discountValueCtrl.text.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Lengkapi semua field')));
+      if (mounted)
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Lengkapi semua field')));
       return;
     }
 
     setState(() => _isSubmitting = true);
 
-    try {
-      final payload = {
-        'code': _codeCtrl.text.trim().toUpperCase(),
-        'title': _titleCtrl.text.trim(),
-        'description': _descriptionCtrl.text.trim(),
-        'discount_type': _discountType,
-        'discount_value': int.parse(_discountValueCtrl.text),
-        'min_purchase': int.parse(_minPurchaseCtrl.text),
-        'max_usage': int.parse(_maxUsageCtrl.text),
-        'valid_from': _validFrom.toIso8601String(),
-        'valid_until': _validUntil.toIso8601String(),
-        'active': _active,
-      };
+    final payload = {
+      'code': _codeCtrl.text.trim().toUpperCase(),
+      'title': _titleCtrl.text.trim(),
+      'description': _descriptionCtrl.text.trim(),
+      'discount_type': _discountType,
+      'discount_value': int.parse(_discountValueCtrl.text),
+      'min_purchase': int.parse(_minPurchaseCtrl.text),
+      'max_usage': int.parse(_maxUsageCtrl.text),
+      'valid_from': _validFrom.toIso8601String(),
+      'valid_until': _validUntil.toIso8601String(),
+      'active': _active,
+    };
+    // Only keep keys that we expect server to accept to avoid repeated server errors
+    final filteredPayload = _filterPayloadToKnownColumns(payload);
 
+    try {
       if (widget.promo != null) {
-        // Update
-        await supabase
-            .from('vouchers')
-            .update(payload)
-            .eq('id', widget.promo!.id);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Promo berhasil diperbarui')),
-        );
+        await _safeUpsertUpdate(widget.promo!.id, filteredPayload);
+        if (mounted)
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Promo berhasil diperbarui')),
+          );
       } else {
-        // Create
-        await supabase.from('vouchers').insert(payload);
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Promo berhasil dibuat')));
+        await _safeUpsertInsert(filteredPayload);
+        if (mounted)
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Promo berhasil dibuat')),
+          );
       }
 
       if (mounted) Navigator.pop(context);
     } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Error: $e')));
+      if (mounted)
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: $e')));
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }
@@ -377,33 +432,124 @@ class __EditPromoScreenState extends State<_EditPromoScreen> {
     }
   }
 
+  // Resilient helpers: try insert/update and when server errors due to missing
+  // columns, strip those keys from payload and retry once.
+  Future<void> _safeUpsertInsert(Map<String, dynamic> payload) async {
+    final sw = Stopwatch()..start();
+    try {
+      await supabase
+          .from('vouchers')
+          .insert(payload)
+          .timeout(const Duration(seconds: 10));
+    } on TimeoutException catch (te) {
+      sw.stop();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Request timed out. Try again.')),
+        );
+      }
+      rethrow;
+    } catch (e) {
+      final msg = e.toString();
+      final missing = _extractMissingColumnFromError(msg);
+      if (missing != null && payload.containsKey(missing)) {
+        final p2 = Map<String, dynamic>.from(payload)..remove(missing);
+        await supabase
+            .from('vouchers')
+            .insert(p2)
+            .timeout(const Duration(seconds: 10));
+      } else {
+        rethrow;
+      }
+    } finally {
+      sw.stop();
+      // Log long requests for debugging
+      if (sw.elapsedMilliseconds > 2000) {
+        // ignore: avoid_print
+        print('vouchers.insert took ${sw.elapsedMilliseconds}ms');
+      }
+    }
+  }
+
+  Future<void> _safeUpsertUpdate(int id, Map<String, dynamic> payload) async {
+    final sw = Stopwatch()..start();
+    try {
+      await supabase
+          .from('vouchers')
+          .update(payload)
+          .eq('id', id)
+          .timeout(const Duration(seconds: 10));
+    } on TimeoutException catch (te) {
+      sw.stop();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Request timed out. Try again.')),
+        );
+      }
+      rethrow;
+    } catch (e) {
+      final msg = e.toString();
+      final missing = _extractMissingColumnFromError(msg);
+      if (missing != null && payload.containsKey(missing)) {
+        final p2 = Map<String, dynamic>.from(payload)..remove(missing);
+        await supabase
+            .from('vouchers')
+            .update(p2)
+            .eq('id', id)
+            .timeout(const Duration(seconds: 10));
+      } else {
+        rethrow;
+      }
+    } finally {
+      sw.stop();
+      if (sw.elapsedMilliseconds > 2000) {
+        // ignore: avoid_print
+        print('vouchers.update(id:$id) took ${sw.elapsedMilliseconds}ms');
+      }
+    }
+  }
+
+  String? _extractMissingColumnFromError(String msg) {
+    final r1 = RegExp(r"Could not find the '([^']+)' column");
+    final m1 = r1.firstMatch(msg);
+    if (m1 != null) return m1.group(1);
+
+    final r2 = RegExp(r'column "([^"]+)"');
+    final m2 = r2.firstMatch(msg);
+    if (m2 != null) return m2.group(1);
+
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF7F5F2),
       appBar: AppBar(
         title: Text(
-          widget.promo == null ? 'Tambah Promo' : 'Edit Promo',
+          widget.promo == null ? 'Buat Promo' : 'Edit Promo',
           style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
         ),
         backgroundColor: const Color(0xFF8B5E3C),
         foregroundColor: Colors.white,
+        elevation: 0,
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            const SizedBox(height: 16),
             TextField(
               controller: _codeCtrl,
               decoration: InputDecoration(
                 labelText: 'Kode Promo',
-                hintText: 'PROMO2025',
+                hintText: 'KODE123',
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
               ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
             TextField(
               controller: _titleCtrl,
               decoration: InputDecoration(
@@ -449,7 +595,7 @@ class __EditPromoScreenState extends State<_EditPromoScreen> {
               keyboardType: TextInputType.number,
               decoration: InputDecoration(
                 labelText:
-                    'Nilai Diskon (${_discountType == 'percentage' ? '%' : 'Rp'})',
+                    "Nilai Diskon (${_discountType == 'percentage' ? '%' : 'Rp'})",
                 hintText: '10',
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),

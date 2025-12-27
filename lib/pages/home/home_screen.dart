@@ -2,6 +2,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 
 import '../../core/cart_manager.dart';
 import '../../core/supabase_client.dart';
@@ -17,6 +18,7 @@ import '../widgets/item_card.dart';
 import '../wishlist/wishlist_screen.dart';
 import '../promo/promo_screen.dart';
 import '../help/help_screen.dart';
+import '../../core/storage_utils.dart';
 
 // Palet warna khusus home (senada dengan login coklat)
 const Color _primaryBrown = Color(0xFF8B5E3C);
@@ -89,6 +91,8 @@ class _HomeScreenState extends State<HomeScreen> {
   // --- data dari Supabase ---
   final List<AppProduct> _allProducts = [];
   List<AppProduct> _visibleProducts = [];
+  // cache resolved signed URLs per product id to avoid per-item FutureBuilders
+  final Map<int, String?> _resolvedImageUrls = {};
   final List<String> _categoryLabels = ['All'];
   String? _selectedCategoryName = 'All';
   String _searchQuery = '';
@@ -185,6 +189,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
     try {
       await Future.wait([_fetchCategories(), _fetchProducts()]);
+      // setelah produk di-fetch, prefetch semua signed URLs supaya
+      // ItemCard tidak perlu request setiap kali dibuild (mengurangi flicker)
+      _prefetchProductImages();
       _applyFilter();
     } catch (e) {
       _errorMessage = 'Gagal memuat data: $e';
@@ -194,6 +201,31 @@ class _HomeScreenState extends State<HomeScreen> {
           _isLoading = false;
         });
       }
+    }
+  }
+
+  // Prefetch resolved image URLs for all products and store in map.
+  Future<void> _prefetchProductImages() async {
+    try {
+      final futures = <Future>[];
+      for (final p in _allProducts) {
+        if (p.imageUrl == null || p.imageUrl!.isEmpty) {
+          _resolvedImageUrls[p.id] = null;
+          continue;
+        }
+        final f = resolveStorageUrl(p.imageUrl)
+            .then((url) {
+              _resolvedImageUrls[p.id] = url;
+            })
+            .catchError((_) {
+              _resolvedImageUrls[p.id] = null;
+            });
+        futures.add(f);
+      }
+      await Future.wait(futures);
+      if (mounted) setState(() {});
+    } catch (_) {
+      // ignore prefetch errors; UI will still try to resolve lazily
     }
   }
 
@@ -589,6 +621,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                               height: bp.trendingHeight,
                                               child: _TrendingScroller(
                                                 products: _trendingProducts,
+                                                resolvedImageUrls:
+                                                    _resolvedImageUrls,
                                                 onTap: (product) {
                                                   Navigator.of(context).push(
                                                     _detailsRoute(product),
@@ -631,6 +665,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                               _visibleProducts[index];
                                           return ItemCard(
                                             product: product,
+                                            resolvedImageUrl:
+                                                _resolvedImageUrls[product.id],
                                             press: () {
                                               Navigator.of(
                                                 context,
@@ -1117,10 +1153,15 @@ class _QuickFilterBar extends StatelessWidget {
 }
 
 class _TrendingScroller extends StatelessWidget {
-  const _TrendingScroller({required this.products, required this.onTap});
+  const _TrendingScroller({
+    required this.products,
+    required this.onTap,
+    required this.resolvedImageUrls,
+  });
 
   final List<AppProduct> products;
   final ValueChanged<AppProduct> onTap;
+  final Map<int, String?> resolvedImageUrls;
 
   @override
   Widget build(BuildContext context) {
@@ -1135,7 +1176,11 @@ class _TrendingScroller extends StatelessWidget {
         separatorBuilder: (_, __) => const SizedBox(width: 12),
         itemBuilder: (context, index) {
           final product = products[index];
-          return _TrendingCard(product: product, onTap: () => onTap(product));
+          return _TrendingCard(
+            product: product,
+            resolvedImageUrl: resolvedImageUrls[product.id],
+            onTap: () => onTap(product),
+          );
         },
       ),
     );
@@ -1143,10 +1188,15 @@ class _TrendingScroller extends StatelessWidget {
 }
 
 class _TrendingCard extends StatelessWidget {
-  const _TrendingCard({required this.product, required this.onTap});
+  const _TrendingCard({
+    required this.product,
+    required this.onTap,
+    this.resolvedImageUrl,
+  });
 
   final AppProduct product;
   final VoidCallback onTap;
+  final String? resolvedImageUrl;
 
   @override
   Widget build(BuildContext context) {
@@ -1182,7 +1232,7 @@ class _TrendingCard extends StatelessWidget {
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(14),
                 child: product.imageUrl != null && product.imageUrl!.isNotEmpty
-                    ? Image.network(product.imageUrl!, fit: BoxFit.cover)
+                    ? _buildSmallCachedImage()
                     : const Icon(Icons.photo_camera_outlined, color: _textDark),
               ),
             ),
@@ -1231,6 +1281,48 @@ class _TrendingCard extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Widget _buildSmallCachedImage() {
+    final stableKey = product.imageUrl?.split('?').first ?? product.imageUrl;
+    final url = resolvedImageUrl;
+    if (url != null && url.isNotEmpty) {
+      return CachedNetworkImage(
+        imageUrl: url,
+        cacheKey: stableKey,
+        fit: BoxFit.cover,
+        useOldImageOnUrlChange: true,
+        placeholder: (context, _) => const Center(
+          child: SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+        errorWidget: (context, _, __) =>
+            const Icon(Icons.photo_camera_outlined, color: _textDark),
+      );
+    }
+
+    if (product.imageUrl != null && product.imageUrl!.startsWith('http')) {
+      return CachedNetworkImage(
+        imageUrl: product.imageUrl!,
+        cacheKey: stableKey,
+        fit: BoxFit.cover,
+        useOldImageOnUrlChange: true,
+        placeholder: (context, _) => const Center(
+          child: SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+        errorWidget: (context, _, __) =>
+            const Icon(Icons.photo_camera_outlined, color: _textDark),
+      );
+    }
+
+    return const Icon(Icons.photo_camera_outlined, color: _textDark);
   }
 
   String _formatRupiah(int value) {

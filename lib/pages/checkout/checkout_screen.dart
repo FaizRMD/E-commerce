@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../core/ui_constants.dart';
 import '../../core/cart_state.dart';
 import '../../core/supabase_client.dart';
 import '../../models/product.dart';
+import '../../core/storage_utils.dart';
+import '../../widgets/cached_resolved_image.dart';
 import '../../models/promotion.dart';
 import '../promo/promo_list_screen.dart';
 import 'order_success_screen.dart';
@@ -312,9 +315,18 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                                 child:
                                     widget.product.imageUrl != null &&
                                         widget.product.imageUrl!.isNotEmpty
-                                    ? Image.network(
-                                        widget.product.imageUrl!,
+                                    ? CachedResolvedImage(
+                                        widget.product.imageUrl,
                                         fit: BoxFit.cover,
+                                        placeholder: Container(
+                                          color: Colors.grey.shade200,
+                                        ),
+                                        errorWidget: Container(
+                                          color: Colors.grey.shade200,
+                                          child: const Icon(
+                                            Icons.image_outlined,
+                                          ),
+                                        ),
                                       )
                                     : Container(
                                         color: Colors.grey.shade200,

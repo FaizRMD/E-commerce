@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
+import '../../core/storage_utils.dart';
+import '../../widgets/cached_resolved_image.dart';
 
 /// Halaman detail produk untuk e-commerce.
 ///
@@ -66,7 +69,19 @@ class ProductDetailPage extends StatelessWidget {
                 bottom: Radius.circular(24),
               ),
               child: imageUrl != null
-                  ? Image.network(imageUrl, fit: BoxFit.cover)
+                  ? CachedResolvedImage(
+                      imageUrl,
+                      fit: BoxFit.cover,
+                      placeholder: Container(color: primary.withOpacity(0.05)),
+                      errorWidget: Container(
+                        color: primary.withOpacity(0.1),
+                        child: Icon(
+                          Icons.shopping_bag_rounded,
+                          size: 80,
+                          color: primary,
+                        ),
+                      ),
+                    )
                   : Container(
                       color: primary.withOpacity(0.1),
                       child: Icon(

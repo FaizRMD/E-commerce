@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 
 import '../../core/ui_constants.dart';
 import '../../models/product.dart';
+import '../../core/storage_utils.dart';
+import '../../widgets/cached_resolved_image.dart';
 
 class OrderSuccessScreen extends StatelessWidget {
   const OrderSuccessScreen({
@@ -76,9 +79,18 @@ class OrderSuccessScreen extends StatelessWidget {
                               child:
                                   product.imageUrl != null &&
                                       product.imageUrl!.isNotEmpty
-                                  ? Image.network(
-                                      product.imageUrl!,
+                                  ? CachedResolvedImage(
+                                      product.imageUrl,
+                                      width: 52,
+                                      height: 52,
                                       fit: BoxFit.cover,
+                                      placeholder: Container(
+                                        color: Colors.grey.shade200,
+                                      ),
+                                      errorWidget: Container(
+                                        color: Colors.grey.shade200,
+                                        child: const Icon(Icons.image_outlined),
+                                      ),
                                     )
                                   : Container(
                                       color: Colors.grey.shade200,

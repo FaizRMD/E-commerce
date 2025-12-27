@@ -1,14 +1,24 @@
 // lib/pages/widgets/item_card.dart
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 
 import '../../core/ui_constants.dart';
+import '../../core/supabase_client.dart';
+import '../../core/storage_utils.dart';
 import '../../models/product.dart';
 
 class ItemCard extends StatelessWidget {
-  const ItemCard({super.key, required this.product, required this.press});
+  const ItemCard({
+    super.key,
+    required this.product,
+    required this.press,
+    this.resolvedImageUrl,
+  });
 
   final AppProduct product;
   final VoidCallback press;
+  // optional: resolved signed URL prefetched by parent to avoid per-item FutureBuilder
+  final String? resolvedImageUrl;
 
   @override
   Widget build(BuildContext context) {
@@ -54,18 +64,7 @@ class ItemCard extends StatelessWidget {
                           child:
                               product.imageUrl != null &&
                                   product.imageUrl!.isNotEmpty
-                              ? Image.network(
-                                  product.imageUrl!,
-                                  fit: BoxFit.cover,
-                                  errorBuilder: (context, error, stack) =>
-                                      const Center(
-                                        child: Icon(
-                                          Icons.broken_image_outlined,
-                                          size: 36,
-                                          color: Colors.black38,
-                                        ),
-                                      ),
-                                )
+                              ? _buildCachedImage()
                               : const Center(
                                   child: Icon(
                                     Icons.photo_camera_outlined,
@@ -149,6 +148,65 @@ class ItemCard extends StatelessWidget {
     );
   }
 
+  Widget _buildCachedImage() {
+    // If parent prefetched a resolved signed URL, use it directly.
+    final url = resolvedImageUrl;
+    final stableKey = product.imageUrl?.split('?').first ?? product.imageUrl;
+
+    if (url != null && url.isNotEmpty) {
+      return CachedNetworkImage(
+        imageUrl: url,
+        cacheKey: stableKey,
+        fit: BoxFit.cover,
+        useOldImageOnUrlChange: true,
+        placeholder: (context, _) => const Center(
+          child: SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+        errorWidget: (context, _, __) => const Center(
+          child: Icon(
+            Icons.broken_image_outlined,
+            size: 36,
+            color: Colors.black38,
+          ),
+        ),
+      );
+    }
+
+    // If no resolved URL but imageUrl is already a public/absolute URL, use it.
+    final img = product.imageUrl;
+    if (img != null && img.startsWith('http')) {
+      return CachedNetworkImage(
+        imageUrl: img,
+        cacheKey: stableKey,
+        fit: BoxFit.cover,
+        useOldImageOnUrlChange: true,
+        placeholder: (context, _) => const Center(
+          child: SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+        errorWidget: (context, _, __) => const Center(
+          child: Icon(
+            Icons.broken_image_outlined,
+            size: 36,
+            color: Colors.black38,
+          ),
+        ),
+      );
+    }
+
+    // Otherwise show a neutral placeholder; resolve may happen later.
+    return const Center(
+      child: Icon(Icons.broken_image_outlined, size: 36, color: Colors.black38),
+    );
+  }
+
   // Helper format "Rp 20.000"
   String _formatRupiah(int value) {
     final s = value.toString();
@@ -163,3 +221,5 @@ class ItemCard extends StatelessWidget {
     return 'Rp ${buffer.toString().split('').reversed.join()}';
   }
 }
+
+// use resolveStorageUrl from core/storage_utils.dart
