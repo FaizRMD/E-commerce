@@ -1,9 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 
 import '../../core/ui_constants.dart';
 import '../../models/product.dart';
-import '../../core/storage_utils.dart';
 import '../../widgets/cached_resolved_image.dart';
 
 class OrderSuccessScreen extends StatelessWidget {

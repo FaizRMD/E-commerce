@@ -1,11 +1,9 @@
 // lib/pages/product/details_screen.dart
 import 'package:flutter/material.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 
 import '../../core/ui_constants.dart';
 import '../../core/supabase_client.dart';
 import '../../models/product.dart';
-import '../../core/storage_utils.dart';
 import '../../widgets/cached_resolved_image.dart';
 import '../../core/cart_manager.dart' as cart;
 import '../checkout/checkout_screen.dart';
@@ -222,7 +220,9 @@ class _ProductTitleWithImage extends StatelessWidget {
                       ? CachedResolvedImage(
                           product.imageUrl,
                           fit: BoxFit.cover,
-                          placeholder: const Center(child: CircularProgressIndicator()),
+                          placeholder: const Center(
+                            child: CircularProgressIndicator(),
+                          ),
                           errorWidget: const Center(
                             child: Icon(
                               Icons.broken_image_outlined,
@@ -730,8 +730,9 @@ class _QuickBuySheetState extends State<_QuickBuySheet> {
                               ? CachedResolvedImage(
                                   widget.product.imageUrl,
                                   fit: BoxFit.cover,
-                                  placeholder:
-                                      Container(color: Colors.grey.shade200),
+                                  placeholder: Container(
+                                    color: Colors.grey.shade200,
+                                  ),
                                   errorWidget: Container(
                                     color: Colors.grey.shade200,
                                     child: const Icon(Icons.image_outlined),

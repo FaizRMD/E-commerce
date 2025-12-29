@@ -441,7 +441,7 @@ class __EditPromoScreenState extends State<_EditPromoScreen> {
           .from('vouchers')
           .insert(payload)
           .timeout(const Duration(seconds: 10));
-    } on TimeoutException catch (te) {
+    } on TimeoutException {
       sw.stop();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -479,7 +479,7 @@ class __EditPromoScreenState extends State<_EditPromoScreen> {
           .update(payload)
           .eq('id', id)
           .timeout(const Duration(seconds: 10));
-    } on TimeoutException catch (te) {
+    } on TimeoutException {
       sw.stop();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

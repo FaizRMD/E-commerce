@@ -1,6 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:cached_network_image/cached_network_image.dart';
-import '../../core/storage_utils.dart';
 import '../../widgets/cached_resolved_image.dart';
 
 /// Halaman detail produk untuk e-commerce.

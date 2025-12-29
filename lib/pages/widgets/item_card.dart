@@ -3,8 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 
 import '../../core/ui_constants.dart';
-import '../../core/supabase_client.dart';
-import '../../core/storage_utils.dart';
 import '../../models/product.dart';
 
 class ItemCard extends StatelessWidget {

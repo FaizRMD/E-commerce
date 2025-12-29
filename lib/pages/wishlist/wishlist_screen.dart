@@ -3,9 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 
 import '../../core/supabase_client.dart';
-import '../../core/storage_utils.dart';
 import '../../widgets/cached_resolved_image.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import '../../models/product.dart';
 
 class WishlistScreen extends StatefulWidget {

@@ -8,7 +8,6 @@ import 'package:flutter/services.dart' show rootBundle;
 // debugPrint not required here; use print or ScaffoldMessenger for user-visible logs
 
 import '../../core/supabase_client.dart';
-import '../../core/storage_utils.dart';
 import '../../widgets/cached_resolved_image.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -119,7 +118,7 @@ class _AdminProductsScreenState extends State<AdminProductsScreen> {
       }
 
       // Delete DB record
-      final resp = await supabase.from('products').delete().eq('id', productId);
+      await supabase.from('products').delete().eq('id', productId);
       // If deletion succeeded, remove locally so UI updates immediately
       if (mounted) {
         setState(() {

@@ -357,12 +357,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  void _showComingSoon(String feature) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('$feature segera hadir')));
-  }
-
   Future<void> _logout() async {
     Navigator.pop(context);
     await supabase.auth.signOut();
@@ -997,47 +991,6 @@ class _HeaderHero extends StatelessWidget {
   }
 }
 
-class _MiniActionButton extends StatelessWidget {
-  const _MiniActionButton({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.12),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: Colors.white.withOpacity(0.18)),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, color: Colors.white, size: 18),
-            const SizedBox(height: 6),
-            Text(
-              label,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
 
 class _PromoStrip extends StatelessWidget {
   const _PromoStrip({required this.onTap});
@@ -1339,31 +1292,7 @@ class _TrendingCard extends StatelessWidget {
   }
 }
 
-class _WelcomeHeader extends StatelessWidget {
-  const _WelcomeHeader();
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: const [
-        Text(
-          'Temukan Sepatu Favoritmu 👟',
-          style: TextStyle(
-            fontSize: 22,
-            fontWeight: FontWeight.w800,
-            color: _textDark,
-          ),
-        ),
-        SizedBox(height: 4),
-        Text(
-          'Koleksi sneaker terbaru untuk gaya harianmu.',
-          style: TextStyle(fontSize: 13, color: _textLight),
-        ),
-      ],
-    );
-  }
-}
+// removed unused _WelcomeHeader
 
 class _HeroCarousel extends StatelessWidget {
   const _HeroCarousel({

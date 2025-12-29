@@ -1,12 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../core/ui_constants.dart';
 import '../../core/cart_state.dart';
 import '../../core/supabase_client.dart';
 import '../../models/product.dart';
-import '../../core/storage_utils.dart';
 import '../../widgets/cached_resolved_image.dart';
 import '../../models/promotion.dart';
 import '../promo/promo_list_screen.dart';
@@ -227,7 +225,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         return;
       }
 
-      final promo = AppPromotion.fromJson(response as Map<String, dynamic>);
+      final promo = AppPromotion.fromJson(response);
 
       if (!promo.isValid) {
         ScaffoldMessenger.of(context).showSnackBar(

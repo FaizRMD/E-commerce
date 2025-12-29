@@ -1,10 +1,8 @@
 // lib/pages/cart/cart_screen.dart
 import 'package:flutter/material.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 
 import '../../core/cart_manager.dart';
 import '../../core/ui_constants.dart';
-import '../../core/storage_utils.dart';
 import '../../widgets/cached_resolved_image.dart';
 
 class CartScreen extends StatefulWidget {
